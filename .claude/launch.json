@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pixora-service",
+      "runtimeExecutable": "service/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "pixora_service", "--data-dir", "service/.data", "--models-dir", "service/.models"],
+      "port": 8732
+    },
+    {
+      "name": "pixora-app",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "app", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}
