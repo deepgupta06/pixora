@@ -26,12 +26,19 @@ log = logging.getLogger("pixora.studio")
 STEPS = 28
 GUIDANCE = 6.0
 # How strongly a restyled photo follows the outlines of the original.
-CANNY_SCALE = 0.55
+CANNY_SCALE = 0.6
+# The outlines guide only the first part of the painting, which fixes the composition
+# and then leaves the style free to simplify detail.
+CANNY_END = 0.5
+# Fine photographic texture is smoothed away before outlines are taken.
+CANNY_BLUR = 2.0
 # InstantID: how firmly the face is placed, and how much it looks like the person.
 IDENTITY_POSE_SCALE = 0.8
-IDENTITY_FACE_SCALE = 0.8
+IDENTITY_FACE_SCALE = 0.7
 # How large the face is drawn, as the distance between the eyes over the picture's width.
-IDENTITY_EYE_DISTANCE = 0.11
+IDENTITY_EYE_DISTANCE = 0.085
+# Lower than for ordinary pictures: with a face to follow, more than this burns the colours.
+IDENTITY_GUIDANCE = 4.0
 
 _MATTE_SIDE = 1024
 _TILE, _TILE_PAD = 512, 16
@@ -197,7 +204,10 @@ class TorchEngine:
     def _plain_attention(self) -> None:
         unet = self._parts.get("unet")
         if unet is not None:
-            unet.set_default_attn_processor()
+            from diffusers.models.attention_processor import AttnProcessor2_0
+
+            # Set outright: diffusers' own reset refuses the InstantID processors.
+            unet.set_attn_processor(AttnProcessor2_0())
 
     # ---- background --------------------------------------------------------
 
@@ -363,12 +373,14 @@ class TorchEngine:
         undo = self._with_style(pipe, style)
         try:
             embeds = self._encode(pipe, prompt, negative)
-            edges = cv2.Canny(np.asarray(image.convert("L")), 80, 180)
+            grey = cv2.GaussianBlur(np.asarray(image.convert("L")), (0, 0), CANNY_BLUR) if CANNY_BLUR else np.asarray(image.convert("L"))
+            edges = cv2.Canny(grey, 60, 150)
             outline = Image.fromarray(np.stack([edges] * 3, axis=-1))
             self._on_gpu("unet", "vae", "canny")
             return self._run(
                 pipe, progress, seed, image=image, control_image=outline, width=image.width, height=image.height,
-                strength=strength, controlnet_conditioning_scale=CANNY_SCALE, guidance_scale=GUIDANCE, **embeds,
+                strength=strength, controlnet_conditioning_scale=CANNY_SCALE, control_guidance_end=CANNY_END,
+                guidance_scale=GUIDANCE, **embeds,
             )
         finally:
             undo()
@@ -415,11 +427,17 @@ class TorchEngine:
                 continue
             h, w = full.shape[:2]
             x1, y1, x2, y2 = ref.box[0] * w, ref.box[1] * h, ref.box[2] * w, ref.box[3] * h
-            # Look only around the stored face, so other people in the photo cannot be picked.
-            mx, my = (x2 - x1) * 0.6, (y2 - y1) * 0.6
+            # Look around the stored face only. The detector misses a face that fills its
+            # whole view, so the crop is a few times the face's size, and of the faces
+            # found in it the one where the stored face was is taken.
+            mx, my = (x2 - x1) * 1.5, (y2 - y1) * 1.5
             cx1, cy1 = int(max(0, x1 - mx)), int(max(0, y1 - my))
             crop = np.ascontiguousarray(full[cy1 : int(min(h, y2 + my)), cx1 : int(min(w, x2 + mx))])
-            points = self._landmarks(crop)
+            centre = np.array([(x1 + x2) / 2 - cx1, (y1 + y2) / 2 - cy1], dtype=np.float32)
+            points = [
+                pts for pts in self._landmarks(crop)
+                if np.linalg.norm(pts.mean(axis=0) - centre) < 0.5 * max(x2 - x1, y2 - y1)
+            ]
             if not points:
                 continue
             matrix, _ = cv2.estimateAffinePartial2D(points[0], face_engines._ARCFACE_DST, method=cv2.LMEDS)
@@ -472,7 +490,7 @@ class TorchEngine:
             return self._run(
                 pipe, progress.part(0.08, 1.0), seed, steps=30, image=pose,
                 image_embeds=torch.from_numpy(embedding)[None], width=width, height=height,
-                controlnet_conditioning_scale=IDENTITY_POSE_SCALE, guidance_scale=5.0, **embeds,
+                controlnet_conditioning_scale=IDENTITY_POSE_SCALE, guidance_scale=IDENTITY_GUIDANCE, **embeds,
             )
         finally:
             undo()

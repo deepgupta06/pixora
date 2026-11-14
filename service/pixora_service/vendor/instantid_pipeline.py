@@ -1,4 +1,5 @@
-# Vendored unchanged, apart from this note and one removed log message, from
+# Vendored, with this note, one removed log message, and one fix (the arguments to
+# `check_inputs` are passed by name, because their order changed in diffusers), from
 # huggingface/diffusers v0.43.0, examples/community/pipeline_stable_diffusion_xl_instantid.py.
 # Pixora computes the face embedding itself, so the insightface package is not needed.
 #
@@ -751,16 +752,16 @@ class StableDiffusionXLInstantIDPipeline(StableDiffusionXLControlNetPipeline):
             prompt_2,
             image,
             callback_steps,
-            negative_prompt,
-            negative_prompt_2,
-            prompt_embeds,
-            negative_prompt_embeds,
-            pooled_prompt_embeds,
-            negative_pooled_prompt_embeds,
-            controlnet_conditioning_scale,
-            control_guidance_start,
-            control_guidance_end,
-            callback_on_step_end_tensor_inputs,
+            negative_prompt=negative_prompt,
+            negative_prompt_2=negative_prompt_2,
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            controlnet_conditioning_scale=controlnet_conditioning_scale,
+            control_guidance_start=control_guidance_start,
+            control_guidance_end=control_guidance_end,
+            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
         )
 
         self._guidance_scale = guidance_scale

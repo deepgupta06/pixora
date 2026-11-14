@@ -211,7 +211,7 @@ export interface StudioStatus {
   /** For each feature, the ids of the models it still needs; empty means ready. */
   features: Record<string, string[]>
   models: { id: string; label: string; licence: string; size_mb: number; installed: boolean }[]
-  styles: { id: string; label: string; restyle: boolean; installed: boolean }[]
+  styles: { id: string; label: string; restyle: boolean; strength: number; installed: boolean }[]
   sizes: { id: string; label: string; width: number; height: number }[]
   max_count: number
   creations_dir: string

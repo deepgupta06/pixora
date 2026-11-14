@@ -146,7 +146,8 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
   const [background, setBackground] = useState('')
   const [faces, setFaces] = useState(false)
   const [style, setStyle] = useState('anime')
-  const [strength, setStrength] = useState(0.6)
+  // Null until the slider is moved: each style then uses its own default.
+  const [chosenStrength, setStrength] = useState<number | null>(null)
   const [describe, setDescribe] = useState('')
   const [count, setCount] = useState(1)
   const [replacement, setReplacement] = useState('')
@@ -166,6 +167,7 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
     ) : null
 
   const styles = status?.styles.filter((s) => s.restyle) ?? []
+  const strength = chosenStrength ?? styles.find((s) => s.id === style)?.strength ?? 0.6
   const max = status?.max_count ?? 1
 
   return (
@@ -243,7 +245,14 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
           <h3>Redraw in a style</h3>
           <div className="chips">
             {styles.map((s) => (
-              <button key={s.id} aria-pressed={style === s.id} onClick={() => setStyle(s.id)}>
+              <button
+                key={s.id}
+                aria-pressed={style === s.id}
+                onClick={() => {
+                  setStyle(s.id)
+                  setStrength(null)
+                }}
+              >
                 {s.label}
               </button>
             ))}
@@ -255,17 +264,17 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
                 <input
                   type="range"
                   min={0.3}
-                  max={0.85}
+                  max={0.9}
                   step={0.05}
                   value={strength}
                   onChange={(e) => setStrength(Number(e.target.value))}
                 />
               </label>
               <label className="field">
-                <span>What the photo shows (optional)</span>
+                <span>What the photo shows (optional, helps keep people as they are)</span>
                 <input
                   value={describe}
-                  placeholder="two friends at a restaurant"
+                  placeholder="two young men at a restaurant"
                   onChange={(e) => setDescribe(e.target.value)}
                 />
               </label>

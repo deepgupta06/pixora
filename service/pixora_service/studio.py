@@ -57,6 +57,9 @@ class Style:
     model: str | None = None  # id in model_store.MODELS of the LoRA, if the look uses one
     weight: float = 1.0
     restyle: bool = True  # offered for restyling a photo, not only for new pictures
+    # How far a restyled photo may move from the original by default (0 to 1).
+    # Flat, drawn looks need more freedom than looks that keep photographic shading.
+    strength: float = 0.6
 
 
 STYLES: dict[str, Style] = {
@@ -72,7 +75,7 @@ STYLES: dict[str, Style] = {
         ),
         Style(
             "anime", "Anime", "anime style, anime artwork, cel shading, clean line art, vibrant colours",
-            "photo, photorealistic, 3d render", "lora-anime", 2.0,
+            "photo, photorealistic, 3d render", "lora-anime", 2.0, strength=0.8,
         ),
         Style(
             "3d", "3D render", "3d style, 3d render, animated film character, soft studio lighting, smooth shading",
@@ -82,7 +85,10 @@ STYLES: dict[str, Style] = {
             "watercolor", "Watercolour", "watercolor painting, soft washes of colour, paper texture",
             "photo, photorealistic, 3d render", "lora-watercolor", 1.0,
         ),
-        Style("pixel", "Pixel art", "pixel art, 16-bit game sprite style", "photo, photorealistic, blurry", "lora-pixel", 1.0),
+        Style(
+            "pixel", "Pixel art", "pixel art, 16-bit game sprite style", "photo, photorealistic, blurry", "lora-pixel",
+            1.0, strength=0.8,
+        ),
         Style(
             "clay", "Clay", "Clay Animation, Clay, stop-motion clay figure, handmade look",
             "photo, photorealistic, flat colours", "lora-clay", 1.0,
@@ -433,7 +439,7 @@ class Studio:
             if style is None:
                 raise StudioError("Choose a style")
             extra = (style.model,) if style.model else ()
-            p["strength"] = min(max(float(p.get("strength") or 0.6), 0.2), 0.9)
+            p["strength"] = min(max(float(p.get("strength") or style.strength), 0.2), 0.9)
         if operation == "inpaint":
             if not p.get("mask"):
                 raise StudioError("Paint over the area to change first")

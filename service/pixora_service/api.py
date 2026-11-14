@@ -306,6 +306,7 @@ class StudioStyle(BaseModel):
     id: str
     label: str
     restyle: bool
+    strength: float  # the default for restyling a photo in this style
     installed: bool
 
 
@@ -1091,7 +1092,10 @@ def create_app(
                 for m in model_store.MODELS.values()
             ],
             styles=[
-                StudioStyle(id=s.id, label=s.label, restyle=s.restyle, installed=not s.model or installed[s.model])
+                StudioStyle(
+                    id=s.id, label=s.label, restyle=s.restyle, strength=s.strength,
+                    installed=not s.model or installed[s.model],
+                )
                 for s in STYLES.values()
             ],
             sizes=[StudioSize(id=k, label=label, width=w, height=h) for k, (label, w, h) in SIZES.items()],
