@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { Filters, PhotoSummary } from './api'
+import type { Creation, Filters, PhotoSummary } from './api'
+import { Create } from './components/Create'
 import { FilterBar } from './components/FilterBar'
 import { AddFolderForm, FoldersDialog } from './components/Folders'
 import { Galaxy } from './components/Galaxy'
@@ -16,7 +17,9 @@ export default function App() {
   const { status, timeline, months, offline, loadMonth, poll } = useLibrary(filters)
   const [foldersOpen, setFoldersOpen] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
-  const [view, setView] = useState<'photos' | 'map' | 'galaxy' | 'people'>('photos')
+  const [view, setView] = useState<'photos' | 'map' | 'galaxy' | 'people' | 'create'>('photos')
+  // A generated picture whose settings the Create view should start from.
+  const [reuse, setReuse] = useState<Creation | null>(null)
 
   // Viewer order follows the grid: newest month first, across the loaded months.
   const ordered = useMemo(
@@ -56,9 +59,9 @@ export default function App() {
       <header className="topbar">
         <h1>Pixora</h1>
         <nav className="tabs" aria-label="Views">
-          {(['photos', 'map', 'galaxy', 'people'] as const).map((v) => (
+          {(['photos', 'map', 'galaxy', 'people', 'create'] as const).map((v) => (
             <button key={v} aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
-              {v === 'photos' ? 'Photos' : v === 'map' ? 'Map' : v === 'galaxy' ? 'Galaxy' : 'People'}
+              {{ photos: 'Photos', map: 'Map', galaxy: 'Galaxy', people: 'People', create: 'Create' }[v]}
             </button>
           ))}
         </nav>
@@ -75,6 +78,8 @@ export default function App() {
             setView('photos')
           }}
         />
+      ) : view === 'create' ? (
+        <Create onOpen={onOpen} onChange={refresh} reuse={reuse} />
       ) : view === 'map' ? (
         <Map filters={filters} onShowPhoto={onOpen} />
       ) : view === 'galaxy' ? (
@@ -127,7 +132,21 @@ export default function App() {
       )}
 
       <FoldersDialog open={foldersOpen} onClose={() => setFoldersOpen(false)} onChange={refresh} />
-      {openPhoto && <Viewer photo={openPhoto} onClose={close} onPrev={prev} onNext={next} />}
+      {openPhoto && (
+        <Viewer
+          photo={openPhoto}
+          onClose={close}
+          onPrev={prev}
+          onNext={next}
+          onOpen={onOpen}
+          onChange={refresh}
+          onReuse={(creation) => {
+            setReuse(creation)
+            setView('create')
+            close()
+          }}
+        />
+      )}
     </div>
   )
 }

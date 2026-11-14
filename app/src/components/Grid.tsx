@@ -1,5 +1,6 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { OriginBadge } from './StudioParts'
 import { api, type PhotoSummary, type Timeline } from '../api'
 import { buildRows, GAP, monthLabel } from '../layout'
 
@@ -78,6 +79,7 @@ export function Grid({ timeline, months, loadMonth, onOpen }: Props) {
                   aria-label={`Photo taken ${new Date(photo.taken_at).toLocaleString()}`}
                 >
                   <img src={api.thumbUrl(photo.hash, 256)} alt="" decoding="async" draggable={false} />
+                  <OriginBadge origin={photo.origin} />
                 </button>
               ))}
             </div>

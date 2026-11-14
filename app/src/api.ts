@@ -141,9 +141,101 @@ export interface PhotoSummary {
   taken_at: string
   width: number
   height: number
+  /** Set for pictures Pixora made; absent or null for the user's own photos. */
+  origin?: 'edited' | 'generated' | null
+}
+
+export type StudioOperation =
+  | 'remove_background'
+  | 'replace_background'
+  | 'enhance'
+  | 'restore'
+  | 'stylize'
+  | 'inpaint'
+  | 'extend'
+  | 'generate'
+  | 'download'
+
+/** The settings a picture was made with. */
+export interface CreationParams {
+  prompt?: string
+  negative_prompt?: string
+  style?: string
+  size?: string
+  strength?: number
+  seed?: number
+  person_id?: number
+  person_name?: string
+  left?: number
+  top?: number
+  right?: number
+  bottom?: number
+  faces?: boolean
+  erase?: boolean
+}
+
+export interface Creation {
+  photo: PhotoSummary
+  kind: 'edited' | 'generated'
+  operation: StudioOperation
+  params: CreationParams
+  created_at: string
+  /** The photo it was made from, while that is still in the library. */
+  source: PhotoSummary | null
+}
+
+export interface StudioJobRequest extends CreationParams {
+  operation: StudioOperation
+  photo_id?: number
+  count?: number
+  /** PNG data URL: opaque where the user painted. */
+  mask?: string
+  models?: string[]
+}
+
+export interface StudioJob {
+  id: number
+  operation: StudioOperation
+  photo_id: number | null
+  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+  /** 0 to 1. */
+  progress: number
+  message: string
+  error: string | null
+  results: PhotoSummary[]
+}
+
+export interface StudioStatus {
+  /** False when the optional PyTorch packages are not installed. */
+  engine_installed: boolean
+  /** For each feature, the ids of the models it still needs; empty means ready. */
+  features: Record<string, string[]>
+  models: { id: string; label: string; licence: string; size_mb: number; installed: boolean }[]
+  styles: { id: string; label: string; restyle: boolean; installed: boolean }[]
+  sizes: { id: string; label: string; width: number; height: number }[]
+  max_count: number
+  creations_dir: string
+}
+
+export interface PersonCandidate {
+  person_id: number
+  name: string
+  cover_face_id: number | null
+  photo_count: number
+}
+
+/** A stretch of a prompt that names someone. */
+export interface PromptMention {
+  text: string
+  start: number
+  end: number
+  /** One person fits, several do, or nobody in the library has the name. */
+  status: 'match' | 'ambiguous' | 'unknown'
+  candidates: PersonCandidate[]
 }
 
 export interface PhotoDetail extends PhotoSummary {
+  creation: Creation | null
   taken_at_source: 'exif' | 'file'
   lat: number | null
   lon: number | null
@@ -262,6 +354,14 @@ export const api = {
   noLocationPhotos: (f: Filters) => request<NoLocationPhotos>(`/api/map/no-location?${filterQuery(f)}`),
   locationSuggestions: (photoId: number) => request<LocationSuggestions>(`/api/map/suggestions/${photoId}`),
   galaxyData: (f: Filters) => request<GalaxyData>(`/api/galaxy/data?${filterQuery(f)}`),
+  studioStatus: () => request<StudioStatus>('/api/studio/status'),
+  promptPeople: (prompt: string) =>
+    request<{ mentions: PromptMention[] }>('/api/studio/people', 'POST', { prompt }),
+  submitJob: (job: StudioJobRequest) => request<StudioJob>('/api/studio/jobs', 'POST', job),
+  job: (id: number) => request<StudioJob>(`/api/studio/jobs/${id}`),
+  cancelJob: (id: number) => request<StudioJob>(`/api/studio/jobs/${id}/cancel`, 'POST'),
+  history: (kind?: 'edited' | 'generated') =>
+    request<Creation[]>(`/api/studio/history${kind ? `?kind=${kind}` : ''}`),
   faceUrl: (faceId: number) => `${BASE}/api/faces/${faceId}/crop`,
   thumbUrl: (hash: string, size: 256 | 1024) => `${BASE}/api/thumbs/${hash}/${size}`,
   originalUrl: (id: number) => `${BASE}/api/photos/${id}/original`,

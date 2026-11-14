@@ -18,7 +18,31 @@ Pixora is a lightweight, private, open-source desktop photo gallery. It scans lo
 - Video analysis
 - Cloud sync and accounts
 - Web and mobile versions
-- Photo editing
+
+## Editing and generation
+
+Added after v1 planning. The rules above still hold: everything runs locally and
+originals are never modified.
+
+- Edits and new pictures are jobs: one at a time, with progress and cancel. The
+  background scan stands aside while a job has the graphics card.
+- Every result is a new file in the creations folder, added to the library with
+  `photos.origin` set to `edited` or `generated`, and a `creations` row holding the
+  operation, the source photo, and the settings (prompt, style, seed) so it can
+  be compared with its source and made again.
+- A prompt can name a person. Names are matched against People; one clear match
+  is used, several matches are put to the user, and an unknown name is reported.
+  The person's clearest confirmed faces are the references. Pictures Pixora
+  made are never used as references.
+- The models sit behind `StudioEngine`, as face models sit behind `FaceEngine`.
+
+| Task | Model | Notes |
+|---|---|---|
+| Background removal | BiRefNet (ONNX) | MIT |
+| Background change, brush, extend | SDXL inpainting 0.1 | Open RAIL++-M |
+| Quality | Real-ESRGAN x4, GFPGAN v1.4 | BSD-3-Clause, Apache 2.0 |
+| Styles | SDXL base 1.0, ControlNet Canny, one LoRA per style | Open RAIL++-M; LoRA licences vary |
+| Likeness of a person | InstantID on SDXL, InsightFace antelopev2 embedding | Apache 2.0; the embedding model is non-commercial |
 
 ## Architecture
 
@@ -154,7 +178,7 @@ All views share one filter state.
 ## Data model
 
 ```text
-photos(id, primary_file_id, content_hash, perceptual_hash, duplicate_of_photo_id, taken_at, lat, lon, width, height, camera, event_id)
+photos(id, primary_file_id, content_hash, perceptual_hash, duplicate_of_photo_id, taken_at, lat, lon, width, height, camera, event_id, origin)
 photo_files(id, photo_id, path, size, modified_at, content_hash, missing)
 faces(id, photo_id, bbox, quality, embedding, engine_version, person_id, assignment_source, confidence)
 people(id, name, cover_face_id, hidden)
@@ -166,6 +190,7 @@ photo_embeddings(photo_id, embedding, model_version)
 events(id, title, type, start_at, end_at)
 layouts(item_id, mode, x, y, z)
 jobs(id, photo_id, stage, status, error, updated_at)
+creations(id, photo_id, kind, operation, source_photo_id, params, created_at)
 ```
 
 ## Roadmap
