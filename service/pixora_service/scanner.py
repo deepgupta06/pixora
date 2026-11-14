@@ -67,6 +67,9 @@ class ScanManager:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._unpaused = threading.Event()
+        # Cleared while an edit or generation job has the graphics card.
+        self._free = threading.Event()
+        self._free.set()
         self._rerun_walk = False
         self._phase = "idle"  # idle | discovering | processing | faces | scenes
         self._discovered = 0
@@ -91,10 +94,10 @@ class ScanManager:
                 self._rerun_walk = self._rerun_walk or walk
                 return
             self._stop.clear()
-            self._thread = threading.Thread(
-                target=self._run, args=(walk,), name="pixora-scan", daemon=True
-            )
-            self._thread.start()
+            thread = threading.Thread(target=self._run, args=(walk,), name="pixora-scan", daemon=True)
+            # Started before it is published: other threads may join it at once.
+            thread.start()
+            self._thread = thread
 
     def pause(self) -> None:
         self._unpaused.clear()
@@ -110,9 +113,56 @@ class ScanManager:
     def shutdown(self) -> None:
         self._stop.set()
         self._unpaused.set()  # release anything waiting on the pause gate
+        self._free.set()
         thread = self._thread
         if thread:
             thread.join(timeout=30)
+
+    def hold(self, held: bool) -> None:
+        """Make the scan wait (without pausing it) while something else needs the PC."""
+        if held:
+            self._free.clear()
+        else:
+            self._free.set()
+
+    def release_models(self) -> None:
+        """Drop the face and scene models; they load again when next needed."""
+        self._engine = None
+        with self._scene_lock:
+            self._scene_engine = None
+
+    def import_file(self, path: str, folder: str) -> int | None:
+        """Add one new file to the library right away and return its photo.
+
+        `folder` joins the library if no library folder contains the file yet,
+        so later scans keep seeing it.
+        """
+        st = os.stat(path)
+        with self.db.write() as conn:
+            parent = os.path.normcase(os.path.abspath(path))
+            folder_id = None
+            for f in conn.execute("SELECT id, path FROM folders"):
+                if parent.startswith(os.path.normcase(f["path"]).rstrip("\\/") + os.sep):
+                    folder_id = f["id"]
+                    break
+            if folder_id is None:
+                folder_id = conn.execute(
+                    "INSERT INTO folders(path, added_at) VALUES(?, ?)", (folder, _now())
+                ).lastrowid
+            conn.execute(
+                "INSERT INTO photo_files(folder_id, path, size, modified_at) VALUES(?, ?, ?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET size=excluded.size, modified_at=excluded.modified_at, "
+                "content_hash=NULL, photo_id=NULL, missing=0, error=NULL",
+                (folder_id, path, st.st_size, st.st_mtime_ns),
+            )
+            file_id = conn.execute("SELECT id FROM photo_files WHERE path=?", (path,)).fetchone()["id"]
+        self._process_file(file_id)
+        row = self.db.conn().execute(
+            "SELECT pf.photo_id FROM photo_files pf JOIN photos p ON p.id = pf.photo_id "
+            "WHERE pf.id=? AND p.ready=1",
+            (file_id,),
+        ).fetchone()
+        return row["photo_id"] if row else None
 
     def wait_idle(self, timeout: float = 60) -> bool:
         thread = self._thread
@@ -124,6 +174,7 @@ class ScanManager:
     def _gate(self) -> bool:
         """Block while paused. Returns False when the scan should stop."""
         self._unpaused.wait()
+        self._free.wait()
         return not self._stop.is_set()
 
     # ---- status ------------------------------------------------------------
