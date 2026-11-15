@@ -581,10 +581,15 @@ class StableDiffusionXLInstantIDPipeline(StableDiffusionXLControlNetPipeline):
         clip_skip: Optional[int] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        init_image: Optional[PipelineImageInput] = None,
+        strength: float = 1.0,
         **kwargs,
     ):
         r"""
         The call function to the pipeline for generation.
+
+        Pixora addition: with `init_image`, painting starts from that picture with `strength`
+        (0 to 1) of the schedule left to run, as in the image-to-image pipelines.
 
         Args:
             prompt (`str` or `List[str]`, *optional*):
@@ -861,20 +866,35 @@ class StableDiffusionXLInstantIDPipeline(StableDiffusionXLControlNetPipeline):
         # 5. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
+        if init_image is not None:
+            first = max(num_inference_steps - min(int(num_inference_steps * strength), num_inference_steps), 0)
+            first *= self.scheduler.order
+            timesteps = timesteps[first:]
+            if hasattr(self.scheduler, "set_begin_index"):
+                self.scheduler.set_begin_index(first)
         self._num_timesteps = len(timesteps)
 
         # 6. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
-        latents = self.prepare_latents(
-            batch_size * num_images_per_prompt,
-            num_channels_latents,
-            height,
-            width,
-            prompt_embeds.dtype,
-            device,
-            generator,
-            latents,
-        )
+        if init_image is not None:
+            pixels = self.image_processor.preprocess(init_image, height=height, width=width)
+            start = self.vae.encode(pixels.to(device=device, dtype=self.vae.dtype)).latent_dist.mode()
+            start = (start * self.vae.config.scaling_factor).to(prompt_embeds.dtype)
+            from diffusers.utils.torch_utils import randn_tensor
+
+            noise = randn_tensor(start.shape, generator=generator, device=device, dtype=start.dtype)
+            latents = self.scheduler.add_noise(start, noise, timesteps[:1])
+        else:
+            latents = self.prepare_latents(
+                batch_size * num_images_per_prompt,
+                num_channels_latents,
+                height,
+                width,
+                prompt_embeds.dtype,
+                device,
+                generator,
+                latents,
+            )
 
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None

@@ -109,7 +109,11 @@ def find_mentions(prompt: str, people: list[Candidate]) -> list[Mention]:
     return mentions
 
 
-def describe_without_names(prompt: str, mentions: list[Mention], replacement: str = "a person") -> str:
+# What stands in for a name in the words the image model reads.
+PERSON = "a person"
+
+
+def describe_without_names(prompt: str, mentions: list[Mention], replacement: str = PERSON) -> str:
     """The prompt as the image model should read it: names mean nothing to it."""
     out, last = [], 0
     for m in sorted(mentions, key=lambda m: m.start):

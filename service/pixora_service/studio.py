@@ -49,9 +49,12 @@ IDLE_UNLOAD_SECONDS = 300
 _KEEP_JOBS = 50
 
 DEFAULT_NEGATIVE = (
-    "blurry, low quality, deformed, bad anatomy, bad hands, extra fingers, fused fingers, "
-    "crossed eyes, watermark, text"
+    "worst quality, low quality, lowres, blurry, out of focus, jpeg artifacts, deformed, ugly, bad anatomy, "
+    "bad hands, extra fingers, fused fingers, crossed eyes, plastic skin, watermark, text"
 )
+# Added to the words for every new picture. A short sentence on its own gives a plain picture;
+# the image model draws detail when detail is asked for.
+DETAIL_PROMPT = "highly detailed, intricate textures, sharp focus, beautiful lighting, rich colours, depth, masterpiece"
 
 
 @dataclass(frozen=True)
@@ -74,11 +77,12 @@ STYLES: dict[str, Style] = {
     s.id: s
     for s in (
         Style(
-            "photo", "Photo", "photograph, natural light, sharp focus, highly detailed",
+            "photo", "Photo", "professional photograph, 35mm, natural light, realistic skin texture, film grain",
             "cartoon, painting, illustration, 3d render", restyle=False,
         ),
         Style(
-            "cinematic", "Cinematic", "cinematic film still, shallow depth of field, dramatic lighting, film grain",
+            "cinematic", "Cinematic",
+            "cinematic film still, shallow depth of field, dramatic moody lighting, vignette, film grain, epic",
             "cartoon, painting, illustration", restyle=False,
         ),
         Style(
@@ -549,6 +553,7 @@ class Studio:
             if style:
                 prompt = f"{prompt}, {style.prompt}"
                 negative = ", ".join(x for x in (style.negative, negative) if x)
+            prompt = f"{prompt}, {DETAIL_PROMPT}"
             return engine.generate(prompt, negative, width, height, seed, style, references, progress, steps=steps)
 
         assert source is not None
