@@ -152,7 +152,25 @@ CREATE TABLE events(
 CREATE INDEX photos_event ON photos(event_id);
 """
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3]
+# Editing and generation. Results are new files; originals are never changed.
+SCHEMA_V4 = """
+-- NULL: the user's own photo. 'edited' or 'generated': a picture Pixora made.
+ALTER TABLE photos ADD COLUMN origin TEXT;
+
+-- How each picture Pixora made came to be, so it can be made again.
+CREATE TABLE creations(
+    id INTEGER PRIMARY KEY,
+    photo_id INTEGER NOT NULL REFERENCES photos(id),
+    kind TEXT NOT NULL,  -- edited | generated
+    operation TEXT NOT NULL,
+    source_photo_id INTEGER REFERENCES photos(id),
+    params TEXT NOT NULL,  -- JSON: prompt, seed, style and the other settings used
+    created_at TEXT NOT NULL
+);
+CREATE INDEX creations_photo ON creations(photo_id);
+"""
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

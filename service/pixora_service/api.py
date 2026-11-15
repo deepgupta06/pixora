@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import numpy as np
 from pydantic import BaseModel
 
-from . import __version__
+from . import __version__, identity, model_store, trash
 from .config import THUMB_SIZES, Config
 from .db import Database
 from .faces import ModelsMissing
@@ -22,6 +22,7 @@ from .galaxy import POINT_SIZE, people_layout
 from .scanner import ScanManager, repair_primaries
 from .scenes import TAG_FLOOR
 from .search import SearchIndex
+from .studio import DEFAULT_STEPS, MAX_COUNT, MAX_STEPS, MIN_STEPS, SIZES, STYLES, Job, Studio, StudioError
 
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]", "tauri.localhost", "testserver"}
 _ALLOWED_ORIGINS = [
@@ -125,6 +126,7 @@ class PhotoSummary(BaseModel):
     taken_at: str
     width: int
     height: int
+    origin: str | None = None  # 'edited' or 'generated' for pictures Pixora made
 
 
 class PhotoFile(BaseModel):
@@ -162,7 +164,19 @@ class PhotoEvent(BaseModel):
     photo_count: int
 
 
+class Creation(BaseModel):
+    """How a picture Pixora made came to be."""
+
+    photo: PhotoSummary
+    kind: str  # edited | generated
+    operation: str
+    params: dict
+    created_at: str
+    source: PhotoSummary | None  # the photo it was made from, while that is still in the library
+
+
 class PhotoDetail(PhotoSummary):
+    creation: Creation | None = None
     tags: list[PhotoTag]
     event: PhotoEvent | None
     taken_at_source: str
@@ -249,6 +263,102 @@ class NoLocationPhotos(BaseModel):
     photos: list[PhotoSummary]
 
 
+class StudioJobRequest(BaseModel):
+    operation: str
+    photo_id: int | None = None
+    prompt: str | None = None
+    negative_prompt: str | None = None
+    style: str | None = None
+    size: str | None = None
+    strength: float | None = None
+    steps: int | None = None
+    detail: int | None = None
+    lighting: bool | None = None
+    expand: bool | None = None
+    seed: int | None = None
+    count: int | None = None
+    person_id: int | None = None
+    mask: str | None = None  # a PNG data URL, white or opaque where the user painted
+    left: float | None = None  # how far to extend each side, as a fraction of the photo
+    top: float | None = None
+    right: float | None = None
+    bottom: float | None = None
+    faces: bool | None = None
+    models: list[str] | None = None
+
+
+class StudioJob(BaseModel):
+    id: int
+    operation: str
+    photo_id: int | None
+    state: str  # queued | running | done | error | cancelled
+    progress: float
+    message: str
+    error: str | None
+    results: list[PhotoSummary]
+
+
+class StudioModel(BaseModel):
+    id: str
+    label: str
+    licence: str
+    size_mb: int
+    installed: bool
+
+
+class StudioStyle(BaseModel):
+    id: str
+    label: str
+    restyle: bool
+    strength: float  # the default for restyling a photo in this style
+    installed: bool
+
+
+class StudioSize(BaseModel):
+    id: str
+    label: str
+    width: int
+    height: int
+
+
+class StudioStatus(BaseModel):
+    engine_installed: bool
+    # For each feature, the ids of the models it still needs; empty means ready.
+    features: dict[str, list[str]]
+    models: list[StudioModel]
+    styles: list[StudioStyle]
+    sizes: list[StudioSize]
+    max_count: int
+    default_steps: int
+    min_steps: int
+    max_steps: int
+    helpers: list[str]
+    creations_dir: str
+
+
+class PersonCandidate(BaseModel):
+    person_id: int
+    name: str
+    cover_face_id: int | None
+    photo_count: int
+
+
+class PromptMention(BaseModel):
+    text: str
+    start: int
+    end: int
+    status: str  # match | ambiguous | unknown
+    candidates: list[PersonCandidate]
+
+
+class PromptPeople(BaseModel):
+    mentions: list[PromptMention]
+
+
+class ResolvePrompt(BaseModel):
+    prompt: str
+
+
 def _filter_sql(
     camera: str | None, date_from: str | None, date_to: str | None, person_id: int | None = None
 ) -> tuple[str, list]:
@@ -314,13 +424,15 @@ class GalaxyData(BaseModel):
 
 
 def create_app(
-    config: Config | None = None, autostart: bool = True, engine_factory=None, scene_factory=None
+    config: Config | None = None, autostart: bool = True, engine_factory=None, scene_factory=None,
+    studio_factory=None,
 ) -> FastAPI:
     config = config or Config.load()
     db = Database(config.db_path)
     scanner = ScanManager(db, config, engine_factory, scene_factory)
     people = scanner.people
     search = SearchIndex(db, scanner.scene_engine)
+    studio = Studio(db, config, scanner, studio_factory)
 
     def photo_filter(
         camera: str | None = None,
@@ -365,11 +477,13 @@ def create_app(
         if autostart and has_folders and not scanner.paused:
             scanner.start(walk=True)
         yield
+        studio.shutdown()
         scanner.shutdown()
 
     app = FastAPI(title="Pixora local service", version=__version__, lifespan=lifespan)
     app.state.db = db
     app.state.scanner = scanner
+    app.state.studio = studio
     app.add_middleware(
         CORSMiddleware, allow_origins=_ALLOWED_ORIGINS, allow_methods=["*"], allow_headers=["*"]
     )
@@ -534,7 +648,7 @@ def create_app(
             raise HTTPException(400, "month must be YYYY-MM")
         where, params = filtered
         rows = db.conn().execute(
-            f"SELECT id, content_hash, taken_at, width, height FROM photos "
+            f"SELECT id, content_hash, taken_at, width, height, origin FROM photos "
             f"WHERE {where} AND taken_at >= ? AND taken_at < ? "
             f"ORDER BY taken_at DESC, id DESC",
             (*params, month, month + "~"),
@@ -546,9 +660,38 @@ def create_app(
                 taken_at=r["taken_at"],
                 width=r["width"],
                 height=r["height"],
+                origin=r["origin"],
             )
             for r in rows
         ]
+
+    def summaries(photo_ids: list[int]) -> list[PhotoSummary]:
+        marks = ",".join("?" * len(photo_ids))
+        rows = {
+            r["id"]: r
+            for r in db.conn().execute(
+                f"SELECT id, content_hash, taken_at, width, height, origin FROM photos WHERE id IN ({marks}) AND ready=1",
+                photo_ids,
+            )
+        }
+        return [
+            PhotoSummary(
+                id=r["id"], hash=r["content_hash"], taken_at=r["taken_at"], width=r["width"], height=r["height"],
+                origin=r["origin"],
+            )
+            for r in (rows.get(i) for i in photo_ids)
+            if r is not None
+        ]
+
+    def creation_of(row) -> Creation | None:
+        own = summaries([row["photo_id"]])
+        if not own:
+            return None
+        source = summaries([row["source_photo_id"]]) if row["source_photo_id"] is not None else []
+        return Creation(
+            photo=own[0], kind=row["kind"], operation=row["operation"], params=json.loads(row["params"]),
+            created_at=row["created_at"], source=source[0] if source else None,
+        )
 
     @app.get("/api/photos/{photo_id}")
     def photo_detail(photo_id: int) -> PhotoDetail:
@@ -570,7 +713,12 @@ def create_app(
             "WHERE pt.photo_id = ? AND pt.score >= ? AND t.category != 'occasions' ORDER BY pt.score DESC",
             (photo_id, TAG_FLOOR),
         )
+        made = conn.execute(
+            "SELECT * FROM creations WHERE photo_id=? ORDER BY id DESC LIMIT 1", (photo_id,)
+        ).fetchone()
         return PhotoDetail(
+            origin=r["origin"],
+            creation=creation_of(made) if made else None,
             tags=[PhotoTag(name=t["name"], category=t["category"], score=t["score"]) for t in tags],
             event=PhotoEvent(
                 id=event["id"], title=event["title"], type=event["type"],
@@ -601,6 +749,52 @@ def create_app(
                 )
             ],
         )
+
+    @app.delete("/api/photos/{photo_id}")
+    def delete_creation(photo_id: int) -> dict:
+        """Remove a picture Pixora made: its file, its previews and every record of it.
+
+        The user's own photos are never deleted, here or anywhere.
+        """
+        folder = os.path.normcase(str(config.creations_dir)).rstrip("\\/") + os.sep
+        with db.write() as conn:
+            photo = conn.execute("SELECT content_hash, origin FROM photos WHERE id=?", (photo_id,)).fetchone()
+            if photo is None:
+                raise HTTPException(404, "Photo not found")
+            if photo["origin"] is None:
+                raise HTTPException(403, "Pixora only deletes pictures it made, never your own photos")
+            paths = [r["path"] for r in conn.execute("SELECT path FROM photo_files WHERE photo_id=?", (photo_id,))]
+            if any(not os.path.normcase(os.path.abspath(p)).startswith(folder) for p in paths):
+                raise HTTPException(409, "A copy of this picture is in one of your own folders, so it is kept")
+            face_ids = [r[0] for r in conn.execute("SELECT id FROM faces WHERE photo_id=?", (photo_id,))]
+            marks = ",".join("?" * len(face_ids))
+            conn.execute(f"DELETE FROM face_constraints WHERE face_id IN ({marks})", face_ids)
+            conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
+            # A person whose cover was one of these faces gets another of their faces.
+            conn.execute(
+                f"UPDATE people SET cover_face_id = (SELECT f.id FROM faces f WHERE f.person_id = people.id "
+                f"AND f.dismissed = 0 ORDER BY f.quality DESC, f.size DESC LIMIT 1) WHERE cover_face_id IN ({marks})",
+                face_ids,
+            )
+            for table in ("photo_tags", "photo_embeddings", "jobs", "creations"):
+                conn.execute(f"DELETE FROM {table} WHERE photo_id=?", (photo_id,))
+            # Edits made from this picture stay; they just no longer have a source to compare with.
+            conn.execute("UPDATE creations SET source_photo_id=NULL WHERE source_photo_id=?", (photo_id,))
+            conn.execute("UPDATE photos SET duplicate_of_photo_id=NULL WHERE duplicate_of_photo_id=?", (photo_id,))
+            conn.execute("UPDATE photos SET primary_file_id=NULL WHERE id=?", (photo_id,))
+            conn.execute("DELETE FROM photo_files WHERE photo_id=?", (photo_id,))
+            conn.execute("DELETE FROM photos WHERE id=?", (photo_id,))
+        # The records are gone; whatever is left on disk can no longer be shown.
+        for path in paths:
+            try:
+                trash.discard(path)
+            except OSError:
+                pass
+        leftovers = [config.thumb_path(photo["content_hash"], size) for size in THUMB_SIZES]
+        leftovers += [config.face_crop_path(face_id) for face_id in face_ids]
+        for path in leftovers:
+            path.unlink(missing_ok=True)
+        return {"deleted": photo_id}
 
     @app.get("/api/photos/{photo_id}/original")
     def photo_original(photo_id: int) -> FileResponse:
@@ -921,5 +1115,99 @@ def create_app(
             links=[GalaxyLink(a=a, b=b, photos=n) for (a, b), n in sorted(pairs.items())],
             point_size=POINT_SIZE,
         )
+
+    # ---- editing and generation ----------------------------------------------
+
+    def job_view(job: Job) -> StudioJob:
+        return StudioJob(
+            id=job.id, operation=job.operation, photo_id=job.photo_id, state=job.state,
+            progress=round(job.progress, 3), message=job.message, error=job.error,
+            results=summaries(job.result_ids) if job.result_ids else [],
+        )
+
+    def known_job(job_id: int) -> Job:
+        job = studio.get(job_id)
+        if job is None:
+            raise HTTPException(404, "Job not found")
+        return job
+
+    @app.get("/api/studio/status")
+    def studio_status() -> StudioStatus:
+        import importlib.util
+
+        installed = {m: model_store.is_installed(config.models_dir, m) for m in model_store.MODELS}
+        return StudioStatus(
+            engine_installed=all(importlib.util.find_spec(m) is not None for m in ("torch", "diffusers")),
+            features={
+                name: [m for m in needs if not installed[m]] for name, needs in model_store.FEATURES.items()
+            },
+            models=[
+                StudioModel(id=m.id, label=m.label, licence=m.licence, size_mb=m.size_mb, installed=installed[m.id])
+                for m in model_store.MODELS.values()
+            ],
+            styles=[
+                StudioStyle(
+                    id=s.id, label=s.label, restyle=s.restyle, strength=s.strength,
+                    installed=not s.model or installed[s.model],
+                )
+                for s in STYLES.values()
+            ],
+            sizes=[StudioSize(id=k, label=label, width=w, height=h) for k, (label, w, h) in SIZES.items()],
+            max_count=MAX_COUNT, default_steps=DEFAULT_STEPS, min_steps=MIN_STEPS, max_steps=MAX_STEPS,
+            helpers=list(model_store.HELPERS),
+            creations_dir=str(config.creations_dir),
+        )
+
+    @app.post("/api/studio/people")
+    def studio_people(body: ResolvePrompt) -> PromptPeople:
+        """The people a prompt names. Unclear names are returned for the user to settle."""
+        mentions = identity.find_mentions(body.prompt, identity.list_candidates(db))
+        return PromptPeople(
+            mentions=[
+                PromptMention(
+                    text=m.text, start=m.start, end=m.end, status=m.status,
+                    candidates=[
+                        PersonCandidate(
+                            person_id=c.person_id, name=c.name, cover_face_id=c.cover_face_id,
+                            photo_count=c.photo_count,
+                        )
+                        for c in m.candidates
+                    ],
+                )
+                for m in mentions
+            ]
+        )
+
+    @app.post("/api/studio/jobs")
+    def studio_submit(body: StudioJobRequest) -> StudioJob:
+        params = body.model_dump(exclude={"operation"}, exclude_none=True)
+        try:
+            return job_view(studio.submit(body.operation, params))
+        except StudioError as e:
+            raise HTTPException(e.status, str(e))
+
+    @app.get("/api/studio/jobs")
+    def studio_jobs() -> list[StudioJob]:
+        return [job_view(j) for j in studio.jobs()]
+
+    @app.get("/api/studio/jobs/{job_id}")
+    def studio_job(job_id: int) -> StudioJob:
+        return job_view(known_job(job_id))
+
+    @app.post("/api/studio/jobs/{job_id}/cancel")
+    def studio_cancel(job_id: int) -> StudioJob:
+        known_job(job_id)
+        return job_view(studio.cancel(job_id))
+
+    @app.get("/api/studio/history")
+    def studio_history(kind: str | None = None, limit: int = 60) -> list[Creation]:
+        """Pictures Pixora made, newest first, with the settings used."""
+        rows = db.conn().execute(
+            "SELECT c.* FROM creations c JOIN photos p ON p.id = c.photo_id "
+            "WHERE p.ready = 1 AND p.primary_file_id IS NOT NULL AND (? IS NULL OR c.kind = ?) "
+            "ORDER BY c.id DESC LIMIT ?",
+            (kind, kind, min(max(limit, 1), 200)),
+        ).fetchall()
+        return [c for c in (creation_of(r) for r in rows) if c is not None]
 
     return app

@@ -22,6 +22,19 @@ dev = [
     "httpx>=0.27",
 ]
 
+# Editing and generation. PyTorch must come from the CUDA index, for example:
+#   pip install -e ".[studio]" --extra-index-url https://download.pytorch.org/whl/cu128
+studio = [
+    "torch>=2.7",
+    "diffusers>=0.43,<0.44",
+    "transformers>=4.44",
+    "accelerate>=1.0",
+    "safetensors>=0.4",
+    "peft>=0.13",
+    "spandrel>=0.4",
+    "huggingface_hub>=0.25",
+]
+
 # Model test scripts in phase0/ (see docs/PHASE0.md).
 phase0 = [
     "scikit-learn>=1.5",
@@ -33,7 +46,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["pixora_service"]
+packages = ["pixora_service", "pixora_service.vendor"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
