@@ -419,7 +419,9 @@ export const api = {
     request<Creation[]>(`/api/studio/history${kind ? `?kind=${kind}` : ''}`),
   faceUrl: (faceId: number) => `${BASE}/api/faces/${faceId}/crop`,
   thumbUrl: (hash: string, size: 256 | 1024) => `${BASE}/api/thumbs/${hash}/${size}`,
-  originalUrl: (id: number) => `${BASE}/api/photos/${id}/original`,
+  // The hash is part of the address: a photo number can be given to a new picture after a
+  // delete, and the browser must not show its saved copy of the old one.
+  originalUrl: (photo: { id: number; hash: string }) => `${BASE}/api/photos/${photo.id}/original?v=${photo.hash}`,
   privateOpen: (path: string) => request<PrivateStatus>('/api/private', 'POST', { path }),
   privateView: (token: string) => request<PrivateView>(`/api/private/${token}`),
   privateClose: (token: string) => request<{ ok: boolean }>(`/api/private/${token}`, 'DELETE'),

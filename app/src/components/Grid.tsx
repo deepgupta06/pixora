@@ -83,6 +83,7 @@ export function Grid({ timeline, months, loadMonth, onOpen, thumbUrl = libraryTh
                   aria-label={`Photo taken ${new Date(photo.taken_at).toLocaleString()}`}
                 >
                   <img src={thumbUrl(photo)} alt="" decoding="async" draggable={false} />
+                  <OriginBadge origin={photo.origin} />
                 </button>
               ))}
             </div>

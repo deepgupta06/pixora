@@ -476,6 +476,7 @@ def create_app(
     scanner = ScanManager(db, config, engine_factory, scene_factory)
     people = scanner.people
     search = SearchIndex(db, scanner.scene_engine)
+    studio = Studio(db, config, scanner, studio_factory)
     private = PrivateBrowser(config.workers)
 
     def photo_filter(
@@ -521,12 +522,14 @@ def create_app(
         if autostart and has_folders and not scanner.paused:
             scanner.start(walk=True)
         yield
+        studio.shutdown()
         private.close()
         scanner.shutdown()
 
     app = FastAPI(title="Pixora local service", version=__version__, lifespan=lifespan)
     app.state.db = db
     app.state.scanner = scanner
+    app.state.studio = studio
     app.state.private = private
     app.add_middleware(
         CORSMiddleware, allow_origins=_ALLOWED_ORIGINS, allow_methods=["*"], allow_headers=["*"]
