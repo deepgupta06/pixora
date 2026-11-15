@@ -407,6 +407,82 @@ def test_the_users_own_photos_cannot_be_deleted(client, one_photo):
     assert os.path.isfile(path) and one_photo in photo_ids(client)
 
 
+def library_state(client):
+    """Everything a picture could leave behind: files and rows."""
+    conn = client.app.state.db.conn()
+    tables = ("photos", "photo_files", "creations", "faces", "jobs", "photo_tags", "photo_embeddings")
+    rows = {t: conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in tables}
+    files = sorted(str(f.relative_to(client.config.data_dir.parent)) for f in client.config.data_dir.parent.rglob("*")
+                   if f.is_file() and not f.name.startswith("pixora.db"))
+    return rows, files
+
+
+def test_incognito_pictures_leave_nothing_until_saved(client):
+    before = library_state(client)
+    job = run(client, operation="generate", prompt="a secret garden", incognito=True, count=2, seed=5)
+    assert job["state"] == "done" and job["incognito"] and job["results"] == []
+    assert [h["index"] for h in job["held"]] == [0, 1]
+    assert library_state(client) == before
+    assert client.get("/api/studio/history").json() == []
+
+    held = client.get(f"/api/studio/jobs/{job['id']}/held/0")
+    assert held.status_code == 200 and held.headers["cache-control"] == "no-store"
+    assert Image.open(io.BytesIO(held.content)).size == (1024, 1024)
+    assert library_state(client) == before  # looking at it saves nothing either
+
+    # Discarding one forgets it; the other is still held.
+    assert client.delete(f"/api/studio/jobs/{job['id']}/held/0").status_code == 200
+    assert client.get(f"/api/studio/jobs/{job['id']}/held/0").status_code == 404
+    assert [h["index"] for h in client.get(f"/api/studio/jobs/{job['id']}").json()["held"]] == [1]
+    assert library_state(client) == before
+
+    # Saving makes it an ordinary library picture, settings and all.
+    saved = client.post(f"/api/studio/jobs/{job['id']}/held/1/save").json()
+    assert saved["origin"] == "generated"
+    assert client.app.state.scanner.wait_idle(60)
+    (creation,) = client.get("/api/studio/history?kind=generated").json()
+    assert creation["photo"]["id"] == saved["id"] and creation["params"]["prompt"] == "a secret garden"
+    assert creation["params"]["seed"] == 6 and "incognito" not in creation["params"]
+    assert client.post(f"/api/studio/jobs/{job['id']}/held/1/save").status_code == 404
+    # Nothing is held any more, so the words typed are gone from memory too.
+    assert client.app.state.studio.get(job["id"]).params == {}
+
+
+def test_discarding_everything_forgets_the_words_too(client):
+    before = library_state(client)
+    job = run(client, operation="generate", prompt="a secret garden", incognito=True)
+    assert client.delete(f"/api/studio/jobs/{job['id']}/held").status_code == 200
+    kept = client.app.state.studio.get(job["id"])
+    assert kept.params == {} and kept.private == []
+    assert client.get(f"/api/studio/jobs/{job['id']}").json()["held"] == []
+    assert library_state(client) == before
+
+
+def test_incognito_can_show_a_known_person_and_is_for_new_pictures_only(client):
+    for n in range(4):
+        make_photo(client.lib / f"a{n}.png", "A", n=n)
+    scan(client)
+    one_photo = photo_ids(client)[0]
+    q = client.get("/api/people/question").json()
+    amit = client.post("/api/people/name", json={"face_ids": q["face_ids"], "name": "Amit"}).json()["person_id"]
+    before = library_state(client)
+    job = run(client, operation="generate", prompt="Amit at the beach", person_id=amit, incognito=True)
+    assert job["state"] == "done" and len(job["held"]) == 1
+    assert client.engine.calls[-1][5]  # their reference faces were used
+    assert library_state(client) == before
+    r = client.post("/api/studio/jobs", json={"operation": "enhance", "photo_id": one_photo, "incognito": True})
+    assert r.status_code == 400
+
+
+def test_a_cancelled_incognito_job_holds_nothing(client):
+    client.engine.gate = threading.Event()
+    job = client.post("/api/studio/jobs", json={"operation": "generate", "prompt": "x", "incognito": True}).json()
+    assert client.delete(f"/api/studio/jobs/{job['id']}/held").status_code == 200
+    client.engine.gate.set()
+    done = client.app.state.studio.wait(job["id"])
+    assert done.state == "cancelled" and done.private == [] and done.params == {}
+
+
 def test_generate_needs_a_prompt_and_a_known_size(client):
     assert client.post("/api/studio/jobs", json={"operation": "generate", "prompt": " "}).status_code == 400
     assert client.post("/api/studio/jobs", json={"operation": "generate", "prompt": "x", "size": "huge"}).status_code == 400

@@ -71,5 +71,11 @@ export function useJob(onDone?: (job: StudioJob) => void) {
     setError(null)
   }, [])
 
-  return { job, active, error, start, cancel, reset }
+  /** Follow a job that was started before this screen was opened. */
+  const adopt = useCallback((existing: StudioJob) => {
+    setError(null)
+    setJob(existing)
+  }, [])
+
+  return { job, active, error, start, cancel, reset, adopt }
 }

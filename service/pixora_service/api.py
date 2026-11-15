@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -10,7 +11,7 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 import numpy as np
 from pydantic import BaseModel
 
@@ -285,6 +286,14 @@ class StudioJobRequest(BaseModel):
     bottom: float | None = None
     faces: bool | None = None
     models: list[str] | None = None
+    # New pictures only: write nothing anywhere; hold the results in memory until saved or discarded.
+    incognito: bool | None = None
+
+
+class HeldPicture(BaseModel):
+    index: int
+    width: int
+    height: int
 
 
 class StudioJob(BaseModel):
@@ -296,6 +305,9 @@ class StudioJob(BaseModel):
     message: str
     error: str | None
     results: list[PhotoSummary]
+    incognito: bool = False
+    # Incognito pictures still held in memory, by their number within the job.
+    held: list[HeldPicture] = []
 
 
 class StudioModel(BaseModel):
@@ -1123,6 +1135,11 @@ def create_app(
             id=job.id, operation=job.operation, photo_id=job.photo_id, state=job.state,
             progress=round(job.progress, 3), message=job.message, error=job.error,
             results=summaries(job.result_ids) if job.result_ids else [],
+            incognito=job.incognito,
+            held=[
+                HeldPicture(index=n, width=item[0].width, height=item[0].height)
+                for n, item in enumerate(list(job.private)) if item is not None
+            ],
         )
 
     def known_job(job_id: int) -> Job:
@@ -1198,6 +1215,36 @@ def create_app(
     def studio_cancel(job_id: int) -> StudioJob:
         known_job(job_id)
         return job_view(studio.cancel(job_id))
+
+    # Incognito pictures. They exist only in this process's memory.
+    unsaved = {"Cache-Control": "no-store"}
+
+    def studio_call(action):
+        try:
+            return action()
+        except StudioError as e:
+            raise HTTPException(e.status, str(e))
+
+    @app.get("/api/studio/jobs/{job_id}/held/{index}")
+    def studio_held(job_id: int, index: int) -> Response:
+        image = studio_call(lambda: studio.private_image(job_id, index))
+        out = io.BytesIO()
+        image.convert("RGB").save(out, "JPEG", quality=95, subsampling=0)
+        return Response(out.getvalue(), media_type="image/jpeg", headers=unsaved)
+
+    @app.post("/api/studio/jobs/{job_id}/held/{index}/save")
+    def studio_keep(job_id: int, index: int) -> PhotoSummary:
+        return summaries([studio_call(lambda: studio.keep(job_id, index))])[0]
+
+    @app.delete("/api/studio/jobs/{job_id}/held/{index}")
+    def studio_discard(job_id: int, index: int) -> dict:
+        studio_call(lambda: studio.discard(job_id, index))
+        return {"discarded": True}
+
+    @app.delete("/api/studio/jobs/{job_id}/held")
+    def studio_discard_all(job_id: int) -> dict:
+        studio_call(lambda: studio.discard(job_id))
+        return {"discarded": True}
 
     @app.get("/api/studio/history")
     def studio_history(kind: str | None = None, limit: int = 60) -> list[Creation]:
