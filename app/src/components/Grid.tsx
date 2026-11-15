@@ -9,9 +9,13 @@ interface Props {
   months: Record<string, PhotoSummary[]>
   loadMonth: (month: string) => void
   onOpen: (photo: PhotoSummary) => void
+  /** Where a tile's image comes from; the library's thumbnail cache by default. */
+  thumbUrl?: (photo: PhotoSummary) => string
 }
 
-export function Grid({ timeline, months, loadMonth, onOpen }: Props) {
+const libraryThumb = (photo: PhotoSummary) => api.thumbUrl(photo.hash, 256)
+
+export function Grid({ timeline, months, loadMonth, onOpen, thumbUrl = libraryThumb }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
@@ -78,8 +82,7 @@ export function Grid({ timeline, months, loadMonth, onOpen }: Props) {
                   onClick={() => onOpen(photo)}
                   aria-label={`Photo taken ${new Date(photo.taken_at).toLocaleString()}`}
                 >
-                  <img src={api.thumbUrl(photo.hash, 256)} alt="" decoding="async" draggable={false} />
-                  <OriginBadge origin={photo.origin} />
+                  <img src={thumbUrl(photo)} alt="" decoding="async" draggable={false} />
                 </button>
               ))}
             </div>

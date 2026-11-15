@@ -339,6 +339,34 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
   return res.json() as Promise<T>
 }
 
+/** A photo in a private session. Nothing about it is stored anywhere. */
+export interface PrivatePhoto {
+  id: number
+  taken_at: string
+  taken_at_source: 'exif' | 'file'
+  width: number
+  height: number
+  name: string
+  size: number
+  camera: string | null
+  lat: number | null
+  lon: number | null
+}
+
+export interface PrivateStatus {
+  token: string
+  state: 'discovering' | 'processing' | 'ready'
+  root: string
+  done: number
+  total: number
+  errors: number
+  truncated: boolean
+}
+
+export interface PrivateView extends PrivateStatus {
+  photos: PrivatePhoto[]
+}
+
 export const api = {
   folders: () => request<Folder[]>('/api/folders'),
   addFolder: (path: string) => request<Folder[]>('/api/folders', 'POST', { path }),
@@ -391,7 +419,11 @@ export const api = {
     request<Creation[]>(`/api/studio/history${kind ? `?kind=${kind}` : ''}`),
   faceUrl: (faceId: number) => `${BASE}/api/faces/${faceId}/crop`,
   thumbUrl: (hash: string, size: 256 | 1024) => `${BASE}/api/thumbs/${hash}/${size}`,
-  // The hash is part of the address: a photo number can be given to a new picture after a
-  // delete, and the browser must not show its saved copy of the old one.
-  originalUrl: (photo: { id: number; hash: string }) => `${BASE}/api/photos/${photo.id}/original?v=${photo.hash}`,
+  originalUrl: (id: number) => `${BASE}/api/photos/${id}/original`,
+  privateOpen: (path: string) => request<PrivateStatus>('/api/private', 'POST', { path }),
+  privateView: (token: string) => request<PrivateView>(`/api/private/${token}`),
+  privateClose: (token: string) => request<{ ok: boolean }>(`/api/private/${token}`, 'DELETE'),
+  privateThumbUrl: (token: string, id: number, size: 256 | 1024) =>
+    `${BASE}/api/private/${token}/thumbs/${id}/${size}`,
+  privateOriginalUrl: (token: string, id: number) => `${BASE}/api/private/${token}/original/${id}`,
 }
