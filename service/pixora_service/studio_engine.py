@@ -417,17 +417,21 @@ class TorchEngine:
         engine = self._face_engine()
         if engine is None:
             return []
-        work, scale = face_engines.working_image(bgr)
-        boxes, _, points = engine._detect(work)
-        offset = 0
-        if len(boxes) == 0:
-            # The detector misses a face that fills its whole view. Look again from further back.
-            offset = max(bgr.shape[:2]) // 2
-            wide = cv2.copyMakeBorder(bgr, offset, offset, offset, offset, cv2.BORDER_CONSTANT, value=(0, 0, 0))
-            work, scale = face_engines.working_image(wide)
+        # The detector misses a face that fills its whole view, even while it finds small
+        # ones behind it. So look a second time from further back, and keep what is new.
+        far = max(bgr.shape[:2]) // 2
+        wide = cv2.copyMakeBorder(bgr, far, far, far, far, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        found: list[tuple[float, np.ndarray]] = []  # size, points
+        for image, offset in ((bgr, 0), (wide, far)):
+            work, scale = face_engines.working_image(image)
             boxes, _, points = engine._detect(work)
-        order = np.argsort([-(b[2] - b[0]) * (b[3] - b[1]) for b in boxes])
-        return [(points[i] / scale - offset).astype(np.float32) for i in order]
+            for box, pts in zip(boxes, points):
+                size = float(max(box[2] - box[0], box[3] - box[1])) / scale
+                pts = (pts / scale - offset).astype(np.float32)
+                centre = pts.mean(axis=0)
+                if all(np.linalg.norm(centre - p.mean(axis=0)) > 0.5 * max(size, s) for s, p in found):
+                    found.append((size, pts))
+        return [pts for _, pts in sorted(found, key=lambda f: -f[0])]
 
     def restore_faces(self, image: Image.Image, strength: float, progress: Progress) -> Image.Image:
         progress.report(0.0, "Restoring faces")
