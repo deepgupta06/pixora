@@ -50,10 +50,13 @@ export function ModelsNeeded({
   status,
   needed,
   onInstalled,
+  optional = false,
 }: {
   status: StudioStatus
   needed: string[]
   onInstalled: () => void
+  /** The models improve results but nothing waits on them. */
+  optional?: boolean
 }) {
   const { job, active, error, start, cancel } = useJob(onInstalled)
   const models = status.models.filter((m) => needed.includes(m.id))
@@ -61,7 +64,10 @@ export function ModelsNeeded({
   return (
     <div className="models-needed">
       <p>
-        This needs {models.length === 1 ? 'a model that is' : 'models that are'} not on this computer yet (
+        {optional
+          ? 'Optional helpers for more detailed pictures are'
+          : `This needs ${models.length === 1 ? 'a model that is' : 'models that are'}`}{' '}
+        not on this computer yet (
         {megabytes(total)}). They are downloaded once and then run here; your photos are never sent anywhere.
       </p>
       <ul>

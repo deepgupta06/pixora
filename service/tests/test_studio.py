@@ -62,8 +62,12 @@ class FakeStudioEngine:
         self.calls.append(("restyle", image.size, prompt, style.id, strength, seed))
         return self._flat(image.size, (255, seed % 256, 255), progress)
 
-    def generate(self, prompt, negative, width, height, seed, style, references, progress, steps=30):
+    def expand(self, prompt, seed):
+        return f"{prompt}, EXPANDED"
+
+    def generate(self, prompt, negative, width, height, seed, style, references, progress, steps=30, extras=()):
         self.steps.append(steps)
+        self.extras = extras
         self.calls.append(("generate", prompt, (width, height), seed, style.id if style else None, references))
         return self._flat((width, height), (seed % 256, 100, 100), progress)
 
@@ -529,3 +533,20 @@ def test_steps_are_passed_on_within_limits_and_recorded(client, one_photo):
     assert detail["creation"]["params"]["steps"] == 15
     status = client.get("/api/studio/status").json()
     assert (status["min_steps"], status["default_steps"], status["max_steps"]) == (15, 30, 50)
+
+
+def test_helpers_detail_the_prompt_and_add_loras(client):
+    engine = client.engine
+    run(client, operation="generate", prompt="a tree")
+    name, prompt, *_ = [c for c in engine.calls if c[0] == "generate"][-1]
+    assert prompt.endswith("EXPANDED")
+    assert dict(engine.extras) == {"lora-detail": 1.5, "lora-offset": 0.1}
+
+    run(client, operation="generate", prompt="a tree", expand=False, detail=2, lighting=True)
+    name, prompt, *_ = [c for c in engine.calls if c[0] == "generate"][-1]
+    assert "EXPANDED" not in prompt and "highly detailed" in prompt
+    assert dict(engine.extras) == {"lora-detail": 3.0, "lora-lighting": 2.0, "lora-offset": 0.1}
+
+    run(client, operation="generate", prompt="a tree", detail=0)
+    assert dict(engine.extras) == {"lora-offset": 0.1}
+    assert set(client.get("/api/studio/status").json()["helpers"]) >= {"prompt-expansion", "lora-detail"}

@@ -165,6 +165,11 @@ export interface CreationParams {
   strength?: number
   /** How many passes the image model makes; more is slower and more detailed. */
   steps?: number
+  /** 0 off, 1 normal, 2 strong. */
+  detail?: number
+  lighting?: boolean
+  /** Let the prompt rewriting model add detail to the description. */
+  expand?: boolean
   seed?: number
   person_id?: number
   person_name?: string
@@ -219,6 +224,8 @@ export interface StudioStatus {
   default_steps: number
   min_steps: number
   max_steps: number
+  /** Ids of the optional models that improve new pictures when installed. */
+  helpers: string[]
   creations_dir: string
 }
 

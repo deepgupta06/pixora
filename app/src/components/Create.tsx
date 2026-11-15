@@ -43,6 +43,9 @@ export function Create({ onOpen, onChange, reuse }: Props) {
   const [count, setCount] = useState(1)
   const [seed, setSeed] = useState('')
   const [steps, setSteps] = useState<number | null>(null)
+  const [expand, setExpand] = useState(true)
+  const [detail, setDetail] = useState(1)
+  const [lighting, setLighting] = useState(false)
   const [mentions, setMentions] = useState<PromptMention[]>([])
   const [who, setWho] = useState<Who>(null)
   const [history, setHistory] = useState<Creation[]>([])
@@ -67,6 +70,9 @@ export function Create({ onOpen, onChange, reuse }: Props) {
     setStyle(c.params.style ?? '')
     setSeed(c.params.seed !== undefined ? String(c.params.seed) : '')
     setSteps(c.params.steps ?? null)
+    setExpand(c.params.expand ?? true)
+    setDetail(c.params.detail ?? 1)
+    setLighting(c.params.lighting ?? false)
     setWho(c.params.person_id ?? null)
     setCount(1)
   }, [])
@@ -115,6 +121,9 @@ export function Create({ onOpen, onChange, reuse }: Props) {
     ...styleModel.filter((m) => status.models.some((x) => x.id === m && !x.installed)),
   ]
 
+  const has = (id: string) => status.models.some((m) => m.id === id && m.installed)
+  const helpersMissing = status.helpers.filter((id) => !has(id))
+
   const generate = () =>
     void start({
       operation: 'generate',
@@ -124,6 +133,9 @@ export function Create({ onOpen, onChange, reuse }: Props) {
       style: style || undefined,
       count,
       steps: steps ?? undefined,
+      expand,
+      detail,
+      lighting,
       seed: seed.trim() ? Number(seed) : undefined,
       person_id: personId,
     })
@@ -227,6 +239,38 @@ export function Create({ onOpen, onChange, reuse }: Props) {
           </label>
         </div>
         <Steps status={status} value={steps} onChange={setSteps} />
+        <div className="field">
+          <span>Quality helpers</span>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={expand && has('prompt-expansion')}
+              disabled={!has('prompt-expansion')}
+              onChange={(e) => setExpand(e.target.checked)}
+            />
+            Add detail to my description for me
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={lighting && has('lora-lighting')}
+              disabled={!has('lora-lighting')}
+              onChange={(e) => setLighting(e.target.checked)}
+            />
+            Cinematic lighting
+          </label>
+          <label className="field">
+            <span>Fine detail</span>
+            <select value={has('lora-detail') ? detail : 0} disabled={!has('lora-detail')} onChange={(e) => setDetail(Number(e.target.value))}>
+              <option value={0}>Off</option>
+              <option value={1}>Normal</option>
+              <option value={2}>Strong</option>
+            </select>
+          </label>
+          {helpersMissing.length > 0 && (
+            <ModelsNeeded status={status} needed={helpersMissing} optional onInstalled={() => setInstalled((n) => n + 1)} />
+          )}
+        </div>
 
         {needed.length > 0 ? (
           <ModelsNeeded status={status} needed={needed} onInstalled={() => setInstalled((n) => n + 1)} />

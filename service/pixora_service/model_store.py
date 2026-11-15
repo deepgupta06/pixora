@@ -113,6 +113,56 @@ MODELS: dict[str, Model] = {
             "lora-clay", "Clay animation style LoRA", "CreativeML Open RAIL-M", 163, "loras", ("ClayAnimationRedm.safetensors",),
             repo="artificialguybr/ClayAnimationRedmond",
         ),
+        Model(
+            "lora-oil", "Oil painting style LoRA", "MIT", 8, "loras", ("oil.safetensors",),
+            repo="ntc-ai/SDXL-LoRA-slider.oil-painting", rename={"oil painting.safetensors": "oil.safetensors"},
+        ),
+        Model(
+            "lora-crayon", "Crayon drawing style LoRA", "Apache-2.0", 45, "loras", ("crayons_v1_sdxl.safetensors",),
+            repo="ostris/crayon_style_lora_sdxl",
+        ),
+        Model(
+            "lora-lineart", "Line art style LoRA", "CreativeML Open RAIL-M", 162, "loras",
+            ("LineAniRedmondV2-Lineart-LineAniAF.safetensors",), repo="artificialguybr/LineAniRedmond-LinearMangaSDXL-V2",
+        ),
+        Model(
+            "lora-ink", "Ink painting style LoRA", "CreativeML Open RAIL-M", 54, "loras",
+            ("Chinese_Ink_Painting_Lora_SDXL.safetensors",), repo="ming-yang/sdxl_chinese_ink_lora",
+        ),
+        Model(
+            "lora-papercut", "Paper cut style LoRA", "CreativeML Open RAIL-M", 324, "loras", ("papercut.safetensors",),
+            repo="TheLastBen/Papercut_SDXL",
+        ),
+        Model(
+            "lora-sticker", "Sticker style LoRA", "CreativeML Open RAIL-M", 162, "loras", ("StickersRedmond.safetensors",),
+            repo="artificialguybr/StickersRedmond",
+        ),
+        Model(
+            "lora-cyborg", "Cyborg style LoRA", "Apache-2.0", 81, "loras", ("cyborg_style_xl-off.safetensors",),
+            repo="goofyai/cyborg_style_xl",
+        ),
+        # Helpers for any new picture. None is required: each is used when it is installed.
+        Model(
+            "lora-detail", "Extra detail LoRA", "MIT", 8, "loras", ("detail.safetensors",),
+            repo="ntc-ai/SDXL-LoRA-slider.extremely-detailed", rename={"extremely detailed.safetensors": "detail.safetensors"},
+        ),
+        Model(
+            "lora-lighting", "Cinematic lighting LoRA", "MIT", 8, "loras", ("lighting.safetensors",),
+            repo="ntc-ai/SDXL-LoRA-slider.cinematic-lighting",
+            rename={"cinematic lighting.safetensors": "lighting.safetensors"},
+        ),
+        Model(
+            "lora-offset", "SDXL offset LoRA (deeper darks and brights)", "CreativeML Open RAIL++-M", 47, "loras",
+            ("sd_xl_offset_example-lora_1.0.safetensors",), repo="stabilityai/stable-diffusion-xl-base-1.0",
+        ),
+        Model(
+            "prompt-expansion", "Prompt rewriting model (from Fooocus)", "AGPL-3.0", 340, "prompt-expansion",
+            (
+                "config.json", "merges.txt", "positive.txt", "pytorch_model.bin", "special_tokens_map.json",
+                "tokenizer.json", "tokenizer_config.json", "vocab.json",
+            ),
+            repo="LykosAI/GPT-Prompt-Expansion-Fooocus-v2",
+        ),
     )
 }
 
@@ -129,6 +179,10 @@ FEATURES: dict[str, tuple[str, ...]] = {
     "generate": _SDXL,
     "generate_person": (*_SDXL, "instantid", "antelopev2"),
 }
+
+
+# Used for new pictures when installed; never demanded.
+HELPERS = ("prompt-expansion", "lora-detail", "lora-lighting", "lora-offset")
 
 
 def studio_dir(models_dir: Path) -> Path:

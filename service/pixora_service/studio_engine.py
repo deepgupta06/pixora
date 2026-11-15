@@ -86,6 +86,7 @@ class TorchEngine:
         self._faces: face_engines.InsightFaceEngine | None = None
         self._identity: ort.InferenceSession | None = None
         self._attributes: ort.InferenceSession | None = None
+        self._expander = None
         self._ip_processors: dict | None = None
 
     # ---- loading -----------------------------------------------------------
@@ -162,7 +163,7 @@ class TorchEngine:
         self._parts.clear()
         self._ip_processors = None
         self._upscaler = self._restorer = None
-        self._matte = self._identity = self._faces = self._attributes = None
+        self._matte = self._identity = self._faces = self._attributes = self._expander = None
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -256,14 +257,26 @@ class TorchEngine:
         alpha = alpha[:, :, None]
         out[y : y + side, x : x + side] = out[y : y + side, x : x + side] * (1 - alpha) + new * alpha
 
-    def _with_style(self, pipe, style: Style | None):
-        """Load the look's LoRA for one run. Returns what to call afterwards."""
-        if style is None or style.model is None:
+    def _with_style(self, pipe, style: Style | None, extras: tuple[tuple[str, float], ...] = ()):
+        """Load the look's LoRA, and any others, for one run. Returns what to call afterwards."""
+        wanted = [(style.model, style.weight)] if style is not None and style.model else []
+        wanted += list(extras)
+        if not wanted:
             return lambda: None
-        model = model_store.MODELS[style.model]
-        pipe.load_lora_weights(str(self._dir(style.model)), weight_name=model.files[0], adapter_name="style")
-        pipe.set_adapters(["style"], adapter_weights=[style.weight])
+        names = []
+        for n, (model_id, _) in enumerate(wanted):
+            names.append(f"lora{n}")
+            file = model_store.MODELS[model_id].files[0]
+            pipe.load_lora_weights(str(self._dir(model_id)), weight_name=file, adapter_name=names[-1])
+        pipe.set_adapters(names, adapter_weights=[weight for _, weight in wanted])
         return pipe.unload_lora_weights
+
+    def expand(self, prompt: str, seed: int) -> str:
+        if self._expander is None:
+            from .expansion import PromptExpander
+
+            self._expander = PromptExpander(self._dir("prompt-expansion"))
+        return self._expander.expand(prompt, seed)
 
     def _detail_faces(
         self, image: Image.Image, embeds: dict, seed: int, progress: Progress, steps: int = DEFAULT_STEPS,
@@ -503,16 +516,17 @@ class TorchEngine:
     def generate(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
         references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
+        extras: tuple[tuple[str, float], ...] = (),
     ) -> Image.Image:
         if references:
-            return self._person(prompt, negative, width, height, seed, style, references, progress, steps)
+            return self._person(prompt, negative, width, height, seed, style, references, progress, steps, extras)
         from diffusers import StableDiffusionXLPipeline
 
         progress.report(0.0, "Loading the image model")
         self._plain_attention()
         pipe = StableDiffusionXLPipeline(**self._components())
         pipe.set_progress_bar_config(disable=True)
-        undo = self._with_style(pipe, style)
+        undo = self._with_style(pipe, style, extras)
         try:
             embeds = self._encode(pipe, prompt, negative)
             self._on_gpu("unet", "vae")
@@ -634,6 +648,7 @@ class TorchEngine:
     def _person(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
         references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
+        extras: tuple[tuple[str, float], ...] = (),
     ) -> Image.Image:
         """A picture of a known person.
 
@@ -652,7 +667,7 @@ class TorchEngine:
         self._plain_attention()
         pipe = StableDiffusionXLPipeline(**self._components())
         pipe.set_progress_bar_config(disable=True)
-        undo = self._with_style(pipe, style)
+        undo = self._with_style(pipe, style, extras)
         try:
             found = []
             for attempt in range(2):

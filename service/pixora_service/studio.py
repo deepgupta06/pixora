@@ -40,6 +40,12 @@ MAX_COUNT = 4
 # How many passes the image model makes over a picture. More is slower and, up to a
 # point, more detailed.
 DEFAULT_STEPS, MIN_STEPS, MAX_STEPS = 30, 15, 50
+# The "detail" setting of a new picture: off, normal, strong, as the weight of the detail LoRA.
+DETAIL_WEIGHTS = (0.0, 1.5, 3.0)
+DEFAULT_DETAIL = 1
+LIGHTING_WEIGHT = 2.0
+# Fooocus keeps this LoRA on at this weight for every picture.
+OFFSET_WEIGHT = 0.1
 # Results larger than this gain nothing visible and cost a lot of time.
 MAX_EDIT_SIDE = 4096
 MAX_BACKGROUND_SIDE = 2048
@@ -104,6 +110,34 @@ STYLES: dict[str, Style] = {
         Style(
             "clay", "Clay", "Clay Animation, Clay, stop-motion clay figure, handmade look",
             "photo, photorealistic, flat colours", "lora-clay", 1.0,
+        ),
+        Style(
+            "oil", "Oil painting", "oil painting, visible brush strokes, thick paint on canvas",
+            "photo, photorealistic, 3d render", "lora-oil", 2.0, strength=0.7,
+        ),
+        Style(
+            "crayon", "Crayon", "crayon drawing on paper, hand drawn", "photo, photorealistic, 3d render",
+            "lora-crayon", 1.0, strength=0.8, face_detail=False,
+        ),
+        Style(
+            "lineart", "Line art", "LineAniAF, lineart, clean black ink lines, manga illustration",
+            "photo, photorealistic, 3d render, blurry", "lora-lineart", 1.0, strength=0.8,
+        ),
+        Style(
+            "ink", "Ink painting", "Chinese Ink, ink wash painting, flowing brush strokes, rice paper",
+            "photo, photorealistic, 3d render", "lora-ink", 0.8, strength=0.8, face_detail=False,
+        ),
+        Style(
+            "papercut", "Paper cut", "papercut, layered cut paper art, paper craft", "photo, photorealistic",
+            "lora-papercut", 1.0, strength=0.8, face_detail=False,
+        ),
+        Style(
+            "sticker", "Sticker", "Stickers, sticker, die-cut sticker with a white border, flat colours",
+            "photo, photorealistic", "lora-sticker", 1.0, strength=0.8, face_detail=False,
+        ),
+        Style(
+            "cyborg", "Cyborg", "cyborg style, cyborg, android, mechanical parts, glowing circuits, science fiction",
+            "sketch, flat colours", "lora-cyborg", 0.8, strength=0.65,
         ),
     )
 }
@@ -195,8 +229,16 @@ class StudioEngine(Protocol):
     def generate(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
         references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
+        extras: tuple[tuple[str, float], ...] = (),
     ) -> Image.Image:
-        """A new picture. With `references`, it shows the person in them."""
+        """A new picture. With `references`, it shows the person in them.
+
+        `extras` are further LoRAs to use, as (model id, weight).
+        """
+        ...
+
+    def expand(self, prompt: str, seed: int) -> str:
+        """The prompt with detail added by the prompt rewriting model."""
         ...
 
     def unload(self) -> None:
@@ -394,6 +436,10 @@ class Studio:
             labels = ", ".join(model_store.MODELS[m].label for m in missing)
             raise StudioError(f"This needs models that are not installed yet: {labels}", 409)
 
+    def _has(self, model_id: str) -> bool:
+        """Whether an optional model can be used."""
+        return not self._check_models or model_store.is_installed(self.config.models_dir, model_id)
+
     def _style(self, params: dict, restyle: bool) -> Style | None:
         style_id = params.get("style")
         if not style_id:
@@ -427,6 +473,9 @@ class Studio:
             if p.get("size", "square") not in SIZES:
                 raise StudioError("Unknown size")
             p.setdefault("size", "square")
+            p["detail"] = min(max(int(DEFAULT_DETAIL if p.get("detail") is None else p["detail"]), 0), 2)
+            p["lighting"] = bool(p.get("lighting"))
+            p["expand"] = p.get("expand") is not False
             style = self._style(p, restyle=False)
             person_id = p.get("person_id")
             if person_id is not None:
@@ -553,8 +602,19 @@ class Studio:
             if style:
                 prompt = f"{prompt}, {style.prompt}"
                 negative = ", ".join(x for x in (style.negative, negative) if x)
-            prompt = f"{prompt}, {DETAIL_PROMPT}"
-            return engine.generate(prompt, negative, width, height, seed, style, references, progress, steps=steps)
+            if p["expand"] and self._has("prompt-expansion"):
+                prompt = engine.expand(prompt, seed)
+            else:
+                prompt = f"{prompt}, {DETAIL_PROMPT}"
+            extras = [
+                ("lora-detail", DETAIL_WEIGHTS[p["detail"]]),
+                ("lora-lighting", LIGHTING_WEIGHT if p["lighting"] else 0.0),
+                ("lora-offset", OFFSET_WEIGHT),
+            ]
+            return engine.generate(
+                prompt, negative, width, height, seed, style, references, progress, steps=steps,
+                extras=tuple((m, w) for m, w in extras if w and self._has(m)),
+            )
 
         assert source is not None
         if op == "remove_background":

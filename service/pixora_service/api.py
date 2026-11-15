@@ -272,6 +272,9 @@ class StudioJobRequest(BaseModel):
     size: str | None = None
     strength: float | None = None
     steps: int | None = None
+    detail: int | None = None
+    lighting: bool | None = None
+    expand: bool | None = None
     seed: int | None = None
     count: int | None = None
     person_id: int | None = None
@@ -329,6 +332,7 @@ class StudioStatus(BaseModel):
     default_steps: int
     min_steps: int
     max_steps: int
+    helpers: list[str]
     creations_dir: str
 
 
@@ -1104,6 +1108,7 @@ def create_app(
             ],
             sizes=[StudioSize(id=k, label=label, width=w, height=h) for k, (label, w, h) in SIZES.items()],
             max_count=MAX_COUNT, default_steps=DEFAULT_STEPS, min_steps=MIN_STEPS, max_steps=MAX_STEPS,
+            helpers=list(model_store.HELPERS),
             creations_dir=str(config.creations_dir),
         )
 
