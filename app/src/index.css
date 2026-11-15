@@ -880,6 +880,62 @@ button[aria-selected='true'] {
   width: 120px;
   height: 120px;
 }
+.incognito {
+  margin: 12px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.incognito-on {
+  border-color: var(--accent);
+}
+.incognito .check {
+  margin: 0;
+  font-weight: 600;
+}
+.incognito p {
+  margin: 4px 0 0;
+}
+.held-head {
+  justify-content: space-between;
+  align-items: center;
+}
+.held-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.held-item {
+  margin: 0;
+}
+.held-item .tile {
+  width: 100%;
+  height: auto;
+  padding: 0;
+}
+.held-item img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.held-item figcaption {
+  margin-top: 6px;
+  gap: 8px;
+}
+.held-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.9);
+  cursor: zoom-out;
+}
+.held-zoom img {
+  max-width: 96vw;
+  max-height: 96vh;
+}
 
 .edit section {
   margin: 14px 0;

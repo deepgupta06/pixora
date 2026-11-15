@@ -91,7 +91,7 @@ export function Viewer({ photo, onClose, onPrev, onNext, onOpen, onChange, onDel
         if (primary && BROWSER_FORMATS.test(primary.path)) {
           const img = new Image()
           img.onload = () => current && setFullFor(photo.id)
-          img.src = api.originalUrl(photo)
+          img.src = api.originalUrl({ id: photo.id, hash: photo.hash })
         }
       },
       () => {},
@@ -99,7 +99,7 @@ export function Viewer({ photo, onClose, onPrev, onNext, onOpen, onChange, onDel
     return () => {
       current = false
     }
-  }, [photo.id, revision])
+  }, [photo.id, photo.hash, revision])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

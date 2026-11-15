@@ -257,6 +257,10 @@ class Job:
     message: str = "Waiting"
     error: str | None = None
     result_ids: list[int] = field(default_factory=list)
+    # Incognito: nothing is written anywhere. The pictures wait here, in memory only,
+    # as (image, settings), until the user saves or discards each; None once that is done.
+    incognito: bool = False
+    private: list[tuple[Image.Image, dict] | None] = field(default_factory=list)
     cancel: threading.Event = field(default_factory=threading.Event)
 
 
@@ -323,7 +327,10 @@ class Studio:
             raise StudioError("Unknown operation")
         params = self._validate(operation, dict(params))
         with self._lock:
-            job = Job(id=self._next_id, operation=operation, params=params, photo_id=params.get("photo_id"))
+            job = Job(
+                id=self._next_id, operation=operation, params=params, photo_id=params.get("photo_id"),
+                incognito=bool(params.pop("incognito", False)),
+            )
             self._next_id += 1
             self._jobs[job.id] = job
             for old in sorted(self._jobs)[:-_KEEP_JOBS]:
@@ -348,6 +355,61 @@ class Studio:
             if job.state == "queued":
                 job.state, job.message = "cancelled", "Cancelled"
         return job
+
+    # ---- incognito pictures -------------------------------------------------
+
+    def _private(self, job_id: int, index: int) -> tuple[Job, Image.Image, dict]:
+        job = self._jobs.get(job_id)
+        if job is None or not 0 <= index < len(job.private) or job.private[index] is None:
+            raise StudioError("That picture is no longer held", 404)
+        image, settings = job.private[index]
+        return job, image, settings
+
+    def private_image(self, job_id: int, index: int) -> Image.Image:
+        return self._private(job_id, index)[1]
+
+    def keep(self, job_id: int, index: int) -> int:
+        """Save an incognito picture: from here on it is an ordinary library picture."""
+        with self._lock:
+            job, image, settings = self._private(job_id, index)
+            job.private[index] = None
+        try:
+            photo_id = self.save(image, GENERATED, "generate", "generated", settings, None)
+        except BaseException:
+            job.private[index] = (image, settings)
+            raise
+        if photo_id not in job.result_ids:
+            job.result_ids.append(photo_id)
+        self._forget_if_empty(job)
+        if not self.scanner.paused:
+            self.scanner.start(walk=False)
+        return photo_id
+
+    def discard(self, job_id: int, index: int | None = None) -> None:
+        """Forget one incognito picture, or with no index everything the job holds."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or not job.incognito:
+                raise StudioError("Job not found", 404)
+            if index is None:
+                job.cancel.set()  # a job still running stops, and keeps nothing
+                if job.state == "queued":
+                    job.state, job.message = "cancelled", "Cancelled"
+                job.private[:] = [None] * len(job.private)
+            else:
+                self._private(job_id, index)
+                job.private[index] = None
+        self._forget_if_empty(job)
+
+    def _forget_if_empty(self, job: Job) -> None:
+        """Once nothing is held, the words typed for the job are forgotten too.
+
+        What stays is its number and how it ended, which say nothing of the picture.
+        """
+        with self._lock:
+            if job.incognito and job.state not in ("queued", "running") and not any(job.private):
+                job.params.clear()
+                job.private.clear()
 
     def shutdown(self) -> None:
         for job in list(self._jobs.values()):
@@ -386,6 +448,11 @@ class Studio:
 
     def _run(self, job: Job) -> None:
         job.state, job.message = "running", "Starting"
+        # The image libraries warn about a long prompt by printing part of it.
+        loud = [logging.getLogger(name) for name in ("diffusers", "transformers")] if job.incognito else []
+        levels = [logger.level for logger in loud]
+        for logger in loud:
+            logger.setLevel(logging.ERROR)
         self.scanner.hold(True)
         if job.operation != "download":
             # The scan's own models would otherwise sit in graphics memory the job needs.
@@ -406,7 +473,11 @@ class Studio:
         except StudioError as e:
             job.state, job.error, job.message = "error", str(e), "Failed"
         except Exception as e:
-            log.exception("Job %s (%s) failed", job.id, job.operation)
+            if job.incognito:
+                # A traceback can quote the words it was working on.
+                log.error("Job %s (%s) failed: %s", job.id, job.operation, type(e).__name__)
+            else:
+                log.exception("Job %s (%s) failed", job.id, job.operation)
             if type(e).__name__ == "OutOfMemoryError":
                 error = "The graphics card ran out of memory. Close other programs that use it, then try again."
                 if self._engine is not None:
@@ -422,6 +493,12 @@ class Studio:
                 except Exception:
                     log.exception("Could not free the graphics card after job %s", job.id)
             self.scanner.hold(False)
+            for logger, level in zip(loud, levels):
+                logger.setLevel(level)
+        if job.incognito:
+            if job.state != "done" or job.cancel.is_set():
+                job.private[:] = [None] * len(job.private)
+            self._forget_if_empty(job)
         if job.result_ids and not self.scanner.paused:
             # Faces and scene tags for the new pictures.
             self.scanner.start(walk=False)
@@ -456,6 +533,10 @@ class Studio:
                 raise StudioError("Unknown model")
             return {"models": ids}
 
+        if p.pop("incognito", False):
+            if operation != "generate":
+                raise StudioError("Incognito is for new pictures only")
+            p["incognito"] = True
         p["prompt"] = " ".join((p.get("prompt") or "").split())
         p["negative_prompt"] = " ".join((p.get("negative_prompt") or "").split())
         p["count"] = min(max(int(p.get("count") or 1), 1), MAX_COUNT)
@@ -581,6 +662,10 @@ class Studio:
             step.report(1.0, "Saving")
             recorded = {k: v for k, v in p.items() if k not in ("mask", "photo_id", "count")}
             recorded["seed"] = seed
+            if job.incognito:
+                step.report(1.0, "Holding the picture, unsaved")
+                job.private.append((image, recorded))
+                continue
             photo_id = self.save(image, OPERATIONS[op], op, stem, recorded, p.get("photo_id"))
             if photo_id not in job.result_ids:  # the same picture twice is one library item
                 job.result_ids.append(photo_id)

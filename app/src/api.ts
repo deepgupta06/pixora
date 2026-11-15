@@ -198,6 +198,8 @@ export interface StudioJobRequest extends CreationParams {
   /** PNG data URL: opaque where the user painted. */
   mask?: string
   models?: string[]
+  /** New pictures only: nothing is written anywhere until the user saves a result. */
+  incognito?: boolean
 }
 
 export interface StudioJob {
@@ -210,6 +212,9 @@ export interface StudioJob {
   message: string
   error: string | null
   results: PhotoSummary[]
+  incognito: boolean
+  /** Incognito pictures the service still holds in memory, unsaved. */
+  held: { index: number; width: number; height: number }[]
 }
 
 export interface StudioStatus {
@@ -374,6 +379,14 @@ export const api = {
   submitJob: (job: StudioJobRequest) => request<StudioJob>('/api/studio/jobs', 'POST', job),
   job: (id: number) => request<StudioJob>(`/api/studio/jobs/${id}`),
   cancelJob: (id: number) => request<StudioJob>(`/api/studio/jobs/${id}/cancel`, 'POST'),
+  jobs: () => request<StudioJob[]>('/api/studio/jobs'),
+  /** An incognito picture. The service tells the browser not to keep a copy. */
+  heldUrl: (jobId: number, index: number) => `${BASE}/api/studio/jobs/${jobId}/held/${index}`,
+  discardHeld: (jobId: number, index?: number) =>
+    request<{ discarded: boolean }>(
+      `/api/studio/jobs/${jobId}/held${index === undefined ? '' : `/${index}`}`,
+      'DELETE',
+    ),
   history: (kind?: 'edited' | 'generated') =>
     request<Creation[]>(`/api/studio/history${kind ? `?kind=${kind}` : ''}`),
   faceUrl: (faceId: number) => `${BASE}/api/faces/${faceId}/crop`,

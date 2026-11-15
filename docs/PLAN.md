@@ -43,6 +43,16 @@ originals are never modified.
 - Photo numbers can be reused after a delete, so the full-size image address
   includes the content hash; the browser never shows a deleted picture's
   saved copy in place of a new one.
+- Incognito, for new pictures: nothing is written to disk or to the database,
+  and the description is kept out of the log. The results are held in the
+  service's memory, shown with "do not store" so the browser keeps no copy, and
+  each is saved or discarded by the user. Save opens the system's save
+  window and writes the picture, under a neutral name, to the folder the user
+  chooses; it is not added to the library, and once written it is no longer
+  held. A discarded one, and the words typed for it, are forgotten. (The
+  service can also file a held picture in the library; the app does not
+  offer that.) Whatever is still held is gone when the service stops. A
+  named person works as usual, since their reference photos are only read.
 - The models sit behind `StudioEngine`, as face models sit behind `FaceEngine`.
 
 | Task | Model | Notes |
