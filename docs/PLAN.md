@@ -34,6 +34,15 @@ originals are never modified.
   is used, several matches are put to the user, and an unknown name is reported.
   The person's clearest confirmed faces are the references. Pictures Pixora
   made are never used as references.
+- A picture Pixora made can be deleted from the viewer, after a confirmation.
+  Its file goes to the Recycle Bin, and its previews, face crops and every
+  library record of it are removed. Edits made from it are kept without a
+  source. The user's own photos can never be deleted this way: the service
+  refuses a photo with no `origin`, or one with a copy outside the creations
+  folder.
+- Photo numbers can be reused after a delete, so the full-size image address
+  includes the content hash; the browser never shows a deleted picture's
+  saved copy in place of a new one.
 - The models sit behind `StudioEngine`, as face models sit behind `FaceEngine`.
 
 | Task | Model | Notes |
