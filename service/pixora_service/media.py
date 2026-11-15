@@ -182,6 +182,23 @@ def process_image(
     `source` is the file's bytes when they are already in memory, else its path.
     `path` names the file so RAW formats can be recognised.
     """
+    info, large, small = render_image(source, file_mtime_ns, path)
+    _save_webp(large, thumb_1024)
+    _save_webp(small, thumb_256)
+    return info
+
+
+def webp_bytes(img: Image.Image) -> bytes:
+    """Encode a thumbnail in memory, for callers that must not write to disk."""
+    out = io.BytesIO()
+    img.save(out, "WEBP", quality=80, method=1)
+    return out.getvalue()
+
+
+def render_image(
+    source: bytes | str, file_mtime_ns: int, path: str = ""
+) -> tuple[ImageInfo, Image.Image, Image.Image]:
+    """Read metadata and make both thumbnails in memory: (info, 1024 px, 256 px)."""
     raw_size: tuple[int, int] | None = None
     raw_flip = 0
     if is_raw(path):
@@ -217,16 +234,13 @@ def process_image(
         small = large.copy()
         small.thumbnail((768, 256), Image.Resampling.LANCZOS)
 
-    _save_webp(large, thumb_1024)
-    _save_webp(small, thumb_256)
-
     if taken:
         source_kind = "exif"
     else:
         taken = datetime.fromtimestamp(file_mtime_ns / 1e9).replace(microsecond=0).isoformat()
         source_kind = "file"
 
-    return ImageInfo(
+    info = ImageInfo(
         width=width,
         height=height,
         taken_at=taken,
@@ -236,6 +250,7 @@ def process_image(
         camera=camera,
         perceptual_hash=_dhash(small),
     )
+    return info, large, small
 
 
 def load_bgr(path: str, min_side: int = 1600):

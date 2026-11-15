@@ -25,6 +25,13 @@ phase), put them in the models folder: `<data dir>/models`, or the folder given 
 releases; those pretrained models are licensed for non-commercial use only.
 Without them the app works normally and reports that face models are not installed.
 
+Private browsing: the **Private** button opens a folder without adding it to the
+library. Small thumbnails are kept in the service's memory only, the large view is
+rendered from the original on request, and responses are sent with `no-store`, so
+nothing reaches the database, the thumbnail cache, the log, or the webview's cache.
+Faces and scenes are not analysed. Exiting, opening another folder, or closing the
+app forgets everything.
+
 Phase 1 (Foundation):
 
 - `service/` — the local Python service: background scan, exact-duplicate handling,

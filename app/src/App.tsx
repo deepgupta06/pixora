@@ -6,6 +6,7 @@ import { Galaxy } from './components/Galaxy'
 import { Grid } from './components/Grid'
 import { Map } from './components/Map'
 import { PeopleView } from './components/People'
+import { PrivateBrowse } from './components/PrivateBrowse'
 import { SyncStatus } from './components/SyncStatus'
 import { Viewer } from './components/Viewer'
 import { useLibrary } from './useLibrary'
@@ -17,6 +18,7 @@ export default function App() {
   const [foldersOpen, setFoldersOpen] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
   const [view, setView] = useState<'photos' | 'map' | 'galaxy' | 'people'>('photos')
+  const [privateMode, setPrivateMode] = useState(false)
 
   // Viewer order follows the grid: newest month first, across the loaded months.
   const ordered = useMemo(
@@ -51,6 +53,8 @@ export default function App() {
   const hasPhotos = (status?.library.photos ?? 0) > 0
   const working = status?.state === 'discovering' || status?.state === 'processing'
 
+  if (privateMode) return <PrivateBrowse onExit={() => setPrivateMode(false)} />
+
   return (
     <div className="app">
       <header className="topbar">
@@ -63,6 +67,9 @@ export default function App() {
           ))}
         </nav>
         <SyncStatus status={status} offline={offline} onChange={refresh} />
+        <button onClick={() => setPrivateMode(true)} title="Look through a folder without Pixora saving anything">
+          Private
+        </button>
         <button onClick={() => setFoldersOpen(true)}>Folders</button>
       </header>
 

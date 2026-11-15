@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 import numpy as np
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ from .config import THUMB_SIZES, Config
 from .db import Database
 from .faces import ModelsMissing
 from .galaxy import POINT_SIZE, people_layout
+from .private import PrivateBrowser, render_large
 from .scanner import ScanManager, repair_primaries
 from .scenes import TAG_FLOOR
 from .search import SearchIndex
@@ -272,6 +273,37 @@ def _filter_sql(
 
 
 
+class PrivatePhotoOut(BaseModel):
+    id: int
+    taken_at: str
+    taken_at_source: str
+    width: int
+    height: int
+    name: str
+    size: int
+    camera: str | None
+    lat: float | None
+    lon: float | None
+
+
+class PrivateStatus(BaseModel):
+    token: str
+    state: str  # discovering | processing | ready
+    root: str
+    done: int
+    total: int
+    errors: int
+    truncated: bool  # the folder had more photos than a private session holds
+
+
+class PrivateView(PrivateStatus):
+    photos: list[PrivatePhotoOut]
+
+
+# Private responses must not land in the webview's disk cache either.
+_NO_STORE = {"Cache-Control": "no-store"}
+
+
 class GalaxyFace(BaseModel):
     id: int
     photo_id: int
@@ -321,6 +353,7 @@ def create_app(
     scanner = ScanManager(db, config, engine_factory, scene_factory)
     people = scanner.people
     search = SearchIndex(db, scanner.scene_engine)
+    private = PrivateBrowser(config.workers)
 
     def photo_filter(
         camera: str | None = None,
@@ -365,11 +398,13 @@ def create_app(
         if autostart and has_folders and not scanner.paused:
             scanner.start(walk=True)
         yield
+        private.close()
         scanner.shutdown()
 
     app = FastAPI(title="Pixora local service", version=__version__, lifespan=lifespan)
     app.state.db = db
     app.state.scanner = scanner
+    app.state.private = private
     app.add_middleware(
         CORSMiddleware, allow_origins=_ALLOWED_ORIGINS, allow_methods=["*"], allow_headers=["*"]
     )
@@ -457,6 +492,80 @@ def create_app(
             conn.execute("DELETE FROM folders WHERE id=?", (folder_id,))
             repair_primaries(conn, photo_ids)
         return folder_rows()
+
+    # ---- private browsing ----------------------------------------------------
+    # Nothing here reaches the database, the thumbnail cache, or the log.
+
+    def private_session(token: str):
+        session = private.get(token)
+        if session is None:
+            raise HTTPException(404, "This private session has ended")
+        return session
+
+    def private_status(session) -> PrivateStatus:
+        return PrivateStatus(
+            token=session.token, state=session.state, root=session.root, done=session.done,
+            total=session.total, errors=session.errors, truncated=session.truncated,
+        )
+
+    @app.post("/api/private")
+    def private_open(body: AddFolder) -> JSONResponse:
+        raw = body.path.strip().strip('"')
+        if not raw or not os.path.isabs(raw):
+            raise HTTPException(400, "Enter the full path of a folder")
+        path = os.path.abspath(raw)
+        if not os.path.isdir(path):
+            raise HTTPException(400, "That folder does not exist")
+        session = private.open(path)
+        return JSONResponse(private_status(session).model_dump(), headers=_NO_STORE)
+
+    @app.get("/api/private/{token}")
+    def private_view(token: str) -> JSONResponse:
+        session = private_session(token)
+        view = PrivateView(
+            **private_status(session).model_dump(),
+            photos=[
+                PrivatePhotoOut(
+                    id=p.id, taken_at=p.info.taken_at, taken_at_source=p.info.taken_at_source,
+                    width=p.info.width, height=p.info.height, name=p.name, size=p.size,
+                    camera=p.info.camera, lat=p.info.lat, lon=p.info.lon,
+                )
+                for p in session.snapshot()
+            ],
+        )
+        return JSONResponse(view.model_dump(), headers=_NO_STORE)
+
+    @app.delete("/api/private/{token}")
+    def private_close(token: str) -> dict:
+        private.close(token)
+        return {"ok": True}
+
+    def private_photo(token: str, photo_id: int):
+        photo = private_session(token).get(photo_id)
+        if photo is None:
+            raise HTTPException(404, "Photo not found")
+        return photo
+
+    @app.get("/api/private/{token}/thumbs/{photo_id}/{size}")
+    def private_thumb(token: str, photo_id: int, size: int) -> Response:
+        if size not in THUMB_SIZES:
+            raise HTTPException(404, "Thumbnail not found")
+        photo = private_photo(token, photo_id)
+        if size == 256:
+            data = photo.thumb
+        else:
+            try:
+                data = render_large(photo)
+            except Exception:
+                raise HTTPException(404, "Original not available")
+        return Response(data, media_type="image/webp", headers=_NO_STORE)
+
+    @app.get("/api/private/{token}/original/{photo_id}")
+    def private_original(token: str, photo_id: int) -> FileResponse:
+        photo = private_photo(token, photo_id)
+        if not os.path.isfile(photo.path):
+            raise HTTPException(404, "Original not available")
+        return FileResponse(photo.path, headers=_NO_STORE)
 
     # ---- scan ----------------------------------------------------------------
 
