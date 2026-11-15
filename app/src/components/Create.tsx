@@ -20,6 +20,48 @@ interface Props {
   revision: number
 }
 
+/**
+ * Let the user put an unsaved picture wherever they like, outside Pixora. Returns whether
+ * the file is known to have been written: with the plain download that older browsers fall
+ * back to, the browser does not say.
+ */
+async function saveAs(url: string): Promise<'written' | 'handed-over' | 'cancelled'> {
+  const blob = await fetch(url, { cache: 'no-store' }).then((r) => {
+    if (!r.ok) throw new Error('That picture is no longer held')
+    return r.blob()
+  })
+  // A neutral name: the description must not end up in a file name.
+  const name = 'picture.jpg'
+  const picker = (
+    window as unknown as {
+      showSaveFilePicker?: (options: object) => Promise<{
+        createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>
+      }>
+    }
+  ).showSaveFilePicker
+  if (picker) {
+    try {
+      const handle = await picker({
+        suggestedName: name,
+        types: [{ description: 'JPEG picture', accept: { 'image/jpeg': ['.jpg'] } }],
+      })
+      const file = await handle.createWritable()
+      await file.write(blob)
+      await file.close()
+      return 'written'
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return 'cancelled'
+      throw e
+    }
+  }
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = name
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(link.href), 10_000)
+  return 'handed-over'
+}
+
 /** Who the picture should show: a person, nobody, or not decided yet. */
 type Who = number | 'nobody' | null
 
@@ -101,15 +143,11 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
   }, [loadHeld, adopt])
 
   const heldCount = heldJobs.reduce((n, j) => n + j.held.length, 0)
-  const afterHeld = (action: Promise<unknown>, saved = false) =>
+  const afterHeld = (action: Promise<unknown>) =>
     action.then(
       () => {
         setHeldError(null)
         void loadHeld()
-        if (saved) {
-          onChange()
-          loadHistory()
-        }
       },
       (e: unknown) => {
         setHeldError(e instanceof Error ? e.message : 'That did not work')
@@ -361,7 +399,10 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
                 Discard all
               </button>
             </div>
-            <p className="muted">Held in memory only. Save the ones you want; the rest leave no trace.</p>
+            <p className="muted">
+              Held in memory only. Save puts a picture in a folder you choose; it is not added to Pixora. The rest
+              leave no trace.
+            </p>
             {heldError && <p className="form-error">{heldError}</p>}
             <div className="held-grid">
               {heldJobs.flatMap((j) =>
@@ -371,8 +412,18 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
                       <img src={api.heldUrl(j.id, h.index)} alt="" />
                     </button>
                     <figcaption className="row">
-                      <button className="primary" onClick={() => void afterHeld(api.saveHeld(j.id, h.index), true)}>
-                        Save
+                      <button
+                        className="primary"
+                        onClick={() =>
+                          void afterHeld(
+                            saveAs(api.heldUrl(j.id, h.index)).then((result) =>
+                              // Once the file is written, Pixora has no reason to go on holding it.
+                              result === 'written' ? api.discardHeld(j.id, h.index) : undefined,
+                            ),
+                          )
+                        }
+                      >
+                        Save…
                       </button>
                       <button onClick={() => void afterHeld(api.discardHeld(j.id, h.index))}>Discard</button>
                     </figcaption>

@@ -382,8 +382,6 @@ export const api = {
   jobs: () => request<StudioJob[]>('/api/studio/jobs'),
   /** An incognito picture. The service tells the browser not to keep a copy. */
   heldUrl: (jobId: number, index: number) => `${BASE}/api/studio/jobs/${jobId}/held/${index}`,
-  saveHeld: (jobId: number, index: number) =>
-    request<PhotoSummary>(`/api/studio/jobs/${jobId}/held/${index}/save`, 'POST'),
   discardHeld: (jobId: number, index?: number) =>
     request<{ discarded: boolean }>(
       `/api/studio/jobs/${jobId}/held${index === undefined ? '' : `/${index}`}`,
