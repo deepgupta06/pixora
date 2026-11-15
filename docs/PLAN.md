@@ -41,7 +41,7 @@ originals are never modified.
 | Background removal | BiRefNet (ONNX) | MIT |
 | Background change, brush, extend | SDXL inpainting 0.1 | Open RAIL++-M |
 | Quality | Real-ESRGAN x4, GFPGAN v1.4 | BSD-3-Clause, Apache 2.0 |
-| Styles | SDXL base 1.0, ControlNet Canny, one LoRA per style | Open RAIL++-M; LoRA licences vary |
+| New pictures, styles | Juggernaut XL v9 (a photographic SDXL fine-tune; plain SDXL base drew poor hands and eyes), ControlNet Canny, one LoRA per style. Each face is painted a second time at full size. | Open RAIL-M; LoRA licences vary |
 | Likeness of a person | InstantID on SDXL, InsightFace antelopev2 embedding | Apache 2.0; the embedding model is non-commercial |
 
 ## Architecture

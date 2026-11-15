@@ -23,8 +23,14 @@ from .studio import Progress, StudioError, Style
 
 log = logging.getLogger("pixora.studio")
 
-STEPS = 28
-GUIDANCE = 6.0
+STEPS = 30
+GUIDANCE = 5.0
+# After a picture is painted, each face in it is painted again on its own at full
+# size, which is what gives clear eyes and skin. This is how far that second pass
+# may move from the first (0 to 1), and how many faces it covers.
+FACE_DETAIL_STRENGTH = 0.4
+FACE_DETAIL_SIDE = 1024
+FACE_DETAIL_MAX = 6
 # How strongly a restyled photo follows the outlines of the original.
 CANNY_SCALE = 0.6
 # The outlines guide only the first part of the painting, which fixes the composition
@@ -34,11 +40,13 @@ CANNY_END = 0.5
 CANNY_BLUR = 2.0
 # InstantID: how firmly the face is placed, and how much it looks like the person.
 IDENTITY_POSE_SCALE = 0.8
-IDENTITY_FACE_SCALE = 0.7
+IDENTITY_FACE_SCALE = 0.8
 # How large the face is drawn, as the distance between the eyes over the picture's width.
 IDENTITY_EYE_DISTANCE = 0.085
 # Lower than for ordinary pictures: with a face to follow, more than this burns the colours.
-IDENTITY_GUIDANCE = 4.0
+IDENTITY_GUIDANCE = 3.5
+# What following a face tends to bring with it, named so the model steers away from it.
+IDENTITY_NEGATIVE = "stock photo watermark, logo, caption, signature, monochrome"
 
 _MATTE_SIDE = 1024
 _TILE, _TILE_PAD = 512, 16
@@ -82,7 +90,7 @@ class TorchEngine:
         """A model part, loaded into ordinary memory on first use."""
         if name in self._parts:
             return self._parts[name]
-        from diffusers import AutoencoderKL, ControlNetModel, EulerDiscreteScheduler, UNet2DConditionModel
+        from diffusers import AutoencoderKL, ControlNetModel, DPMSolverMultistepScheduler, UNet2DConditionModel
         from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
 
         if name in _OPTIONAL:
@@ -106,7 +114,10 @@ class TorchEngine:
         elif name == "tokenizer_2":
             part = CLIPTokenizer.from_pretrained(base / "tokenizer_2")
         elif name == "scheduler":
-            part = EulerDiscreteScheduler.from_pretrained(base / "scheduler")
+            # DPM++ 2M Karras, which the image model's makers recommend.
+            part = DPMSolverMultistepScheduler.from_pretrained(
+                base / "scheduler", use_karras_sigmas=True, euler_at_final=True
+            )
         elif name == "canny":
             part = ControlNetModel.from_pretrained(self._dir("controlnet-canny"), **half)
         elif name == "identity_net":
@@ -174,7 +185,7 @@ class TorchEngine:
             "negative_pooled_prompt_embeds": negative_pooled,
         }
 
-    def _run(self, pipe, progress: Progress, seed: int, steps: int = STEPS, **kwargs) -> Image.Image:
+    def _run(self, pipe, progress: Progress, seed: int, steps: int = STEPS, label: str = "Painting", **kwargs) -> Image.Image:
         # Img2img and inpainting run only part of the schedule.
         total = max(1, round(steps * float(kwargs.get("strength", 1.0))))
 
@@ -182,7 +193,7 @@ class TorchEngine:
             progress.report(0.1 + 0.85 * (step + 1) / total)
             return tensors
 
-        progress.report(0.1, "Painting")
+        progress.report(0.1, label)
         with torch.inference_mode():
             out = pipe(
                 num_inference_steps=steps,
@@ -200,6 +211,55 @@ class TorchEngine:
         pipe.load_lora_weights(str(self._dir(style.model)), weight_name=model.files[0], adapter_name="style")
         pipe.set_adapters(["style"], adapter_weights=[style.weight])
         return pipe.unload_lora_weights
+
+    def _detail_faces(
+        self, image: Image.Image, embeds: dict, seed: int, progress: Progress, guidance: float = GUIDANCE
+    ) -> Image.Image:
+        """Paint every face again, enlarged, and set it back into the picture.
+
+        A face that takes up a small part of a picture gets too few pixels for
+        clear eyes. Uses whichever model parts are already on the graphics card.
+        """
+        from diffusers import StableDiffusionXLImg2ImgPipeline
+
+        rgb = np.asarray(image.convert("RGB"))
+        h, w = rgb.shape[:2]
+        crops = []
+        for points in self._landmarks(np.ascontiguousarray(rgb[:, :, ::-1])):
+            eyes = (points[0] + points[1]) / 2
+            mouth = (points[3] + points[4]) / 2
+            # A face turned aside has its eyes close together, so the height counts too.
+            size = max(float(np.linalg.norm(points[0] - points[1])), float(np.linalg.norm(eyes - mouth)))
+            side = int(min(size * 5, w, h))
+            if size < 6 or side < 48 or side > FACE_DETAIL_SIDE * 0.9:
+                continue  # too small to be a real face, or already painted at full size
+            cx, cy = points.mean(axis=0)
+            x = int(min(max(0, cx - side / 2), w - side))
+            y = int(min(max(0, cy - side / 2), h - side))
+            crops.append((x, y, side))
+            if len(crops) == FACE_DETAIL_MAX:
+                break
+        if not crops:
+            return image
+        pipe = StableDiffusionXLImg2ImgPipeline(**self._components())
+        pipe.set_progress_bar_config(disable=True)
+        out = rgb.astype(np.float32)
+        full = (FACE_DETAIL_SIDE, FACE_DETAIL_SIDE)
+        for n, (x, y, side) in enumerate(crops):
+            step = progress.part(n / len(crops), (n + 1) / len(crops))
+            face = Image.fromarray(rgb[y : y + side, x : x + side]).resize(full, Image.Resampling.LANCZOS)
+            fixed = self._run(
+                pipe, step, seed, label="Refining faces", image=face, strength=FACE_DETAIL_STRENGTH,
+                guidance_scale=guidance, **embeds,
+            )
+            fixed = np.asarray(fixed.resize((side, side), Image.Resampling.LANCZOS), dtype=np.float32)
+            # Fade the new face in from the edge of its square so no seam shows.
+            margin = max(2, side // 8)
+            alpha = np.zeros((side, side), dtype=np.float32)
+            alpha[margin:-margin, margin:-margin] = 1.0
+            alpha = cv2.GaussianBlur(alpha, (0, 0), margin / 2)[:, :, None]
+            out[y : y + side, x : x + side] = out[y : y + side, x : x + side] * (1 - alpha) + fixed * alpha
+        return Image.fromarray(out.round().clip(0, 255).astype(np.uint8))
 
     def _plain_attention(self) -> None:
         unet = self._parts.get("unet")
@@ -377,11 +437,13 @@ class TorchEngine:
             edges = cv2.Canny(grey, 60, 150)
             outline = Image.fromarray(np.stack([edges] * 3, axis=-1))
             self._on_gpu("unet", "vae", "canny")
-            return self._run(
-                pipe, progress, seed, image=image, control_image=outline, width=image.width, height=image.height,
+            paint = progress.part(0.0, 0.8) if style.face_detail else progress
+            out = self._run(
+                pipe, paint, seed, image=image, control_image=outline, width=image.width, height=image.height,
                 strength=strength, controlnet_conditioning_scale=CANNY_SCALE, control_guidance_end=CANNY_END,
                 guidance_scale=GUIDANCE, **embeds,
             )
+            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0)) if style.face_detail else out
         finally:
             undo()
 
@@ -401,7 +463,10 @@ class TorchEngine:
         try:
             embeds = self._encode(pipe, prompt, negative)
             self._on_gpu("unet", "vae")
-            return self._run(pipe, progress, seed, width=width, height=height, guidance_scale=GUIDANCE, **embeds)
+            out = self._run(
+                pipe, progress.part(0.0, 0.8), seed, width=width, height=height, guidance_scale=GUIDANCE, **embeds
+            )
+            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0))
         finally:
             undo()
 
@@ -468,6 +533,9 @@ class TorchEngine:
         from .vendor.instantid_pipeline import StableDiffusionXLInstantIDPipeline, draw_kps
 
         embedding = self._identity_embedding(references, progress.part(0.0, 0.08))
+        # The likeness model learnt from stock photos and stamps their watermark on pictures
+        # of exactly the usual sizes. A size slightly off them avoids it.
+        width, height = width - 8, height - 8
         progress.report(0.08, "Loading the image model")
         pipe = StableDiffusionXLInstantIDPipeline(controlnet=self._part("identity_net"), **self._components())
         pipe.set_progress_bar_config(disable=True)
@@ -484,14 +552,21 @@ class TorchEngine:
             pipe.set_ip_adapter_scale(IDENTITY_FACE_SCALE)
         undo = self._with_style(pipe, style)
         try:
-            embeds = self._encode(pipe, prompt, negative)
+            embeds = self._encode(pipe, prompt, ", ".join(x for x in (IDENTITY_NEGATIVE, negative) if x))
             pose = draw_kps(Image.new("RGB", (width, height)), self._face_placement(width, height))
             self._on_gpu("unet", "vae", "identity_net", "image_proj")
-            return self._run(
-                pipe, progress.part(0.08, 1.0), seed, steps=30, image=pose,
-                image_embeds=torch.from_numpy(embedding)[None], width=width, height=height,
+            face = torch.from_numpy(embedding)[None]
+            out = self._run(
+                pipe, progress.part(0.08, 0.8), seed, image=pose, image_embeds=face, width=width, height=height,
                 controlnet_conditioning_scale=IDENTITY_POSE_SCALE, guidance_scale=IDENTITY_GUIDANCE, **embeds,
             )
+            # The second pass on the face keeps following the person: their likeness is
+            # handed to the image model the same way, alongside the words.
+            with torch.inference_mode():
+                tokens = pipe._encode_prompt_image_emb(face, self.device, self.dtype, True)
+            embeds["negative_prompt_embeds"] = torch.cat([embeds["negative_prompt_embeds"], tokens[:1]], dim=1)
+            embeds["prompt_embeds"] = torch.cat([embeds["prompt_embeds"], tokens[1:]], dim=1)
+            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0), IDENTITY_GUIDANCE)
         finally:
             undo()
             self._plain_attention()

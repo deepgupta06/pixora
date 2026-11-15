@@ -45,7 +45,10 @@ MAX_ENHANCED_SIDE = 6000
 IDLE_UNLOAD_SECONDS = 300
 _KEEP_JOBS = 50
 
-DEFAULT_NEGATIVE = "blurry, low quality, deformed, bad anatomy, extra fingers, watermark, text"
+DEFAULT_NEGATIVE = (
+    "blurry, low quality, deformed, bad anatomy, bad hands, extra fingers, fused fingers, "
+    "crossed eyes, watermark, text"
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,8 @@ class Style:
     # How far a restyled photo may move from the original by default (0 to 1).
     # Flat, drawn looks need more freedom than looks that keep photographic shading.
     strength: float = 0.6
+    # Whether faces are painted a second time at full size. Wrong for looks made of large blocks.
+    face_detail: bool = True
 
 
 STYLES: dict[str, Style] = {
@@ -87,7 +92,7 @@ STYLES: dict[str, Style] = {
         ),
         Style(
             "pixel", "Pixel art", "pixel art, 16-bit game sprite style", "photo, photorealistic, blurry", "lora-pixel",
-            1.0, strength=0.8,
+            1.0, strength=0.8, face_detail=False,
         ),
         Style(
             "clay", "Clay", "Clay Animation, Clay, stop-motion clay figure, handmade look",

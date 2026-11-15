@@ -47,8 +47,6 @@ _SDXL_FILES = (
     "text_encoder_2/model.fp16.safetensors",
     "unet/config.json",
     "unet/diffusion_pytorch_model.fp16.safetensors",
-    "vae/config.json",
-    "vae/diffusion_pytorch_model.fp16.safetensors",
 )
 
 MODELS: dict[str, Model] = {
@@ -68,9 +66,10 @@ MODELS: dict[str, Model] = {
             ("GFPGANv1.4.pth",),
             urls={"GFPGANv1.4.pth": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth"},
         ),
+        # A photographic fine-tune of SDXL: the plain base model draws poor hands, eyes and skin.
         Model(
-            "sdxl", "Stable Diffusion XL base 1.0", "CreativeML Open RAIL++-M", 6620, "sdxl-base",
-            _SDXL_FILES, repo="stabilityai/stable-diffusion-xl-base-1.0",
+            "sdxl", "Juggernaut XL v9 (image model)", "CreativeML Open RAIL-M", 6460, "juggernaut-xl",
+            _SDXL_FILES, repo="RunDiffusion/Juggernaut-XL-v9", revision="cf419233522daa0b9ea36c3aff98fa2cab1fb0fb",
         ),
         Model(
             "sdxl-vae", "SDXL VAE (half-precision fix)", "MIT", 320, "sdxl-vae-fp16-fix",

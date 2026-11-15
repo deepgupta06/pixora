@@ -499,7 +499,7 @@ def test_missing_models_are_named_before_a_job_starts(tmp_path):
         assert not any(m["installed"] for m in status["models"])
         assert {s["id"] for s in status["styles"] if s["restyle"]} >= {"anime", "3d"}
         r = c.post("/api/studio/jobs", json={"operation": "generate", "prompt": "a tree", "style": "anime"})
-        assert r.status_code == 409 and "Stable Diffusion XL" in r.json()["detail"] and "Anime" in r.json()["detail"]
+        assert r.status_code == 409 and "Juggernaut XL" in r.json()["detail"] and "Anime" in r.json()["detail"]
 
 
 def test_a_model_is_installed_only_when_every_file_is_there(tmp_path):
