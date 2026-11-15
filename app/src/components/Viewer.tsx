@@ -91,7 +91,7 @@ export function Viewer({ photo, onClose, onPrev, onNext, onOpen, onChange, onDel
         if (primary && BROWSER_FORMATS.test(primary.path)) {
           const img = new Image()
           img.onload = () => current && setFullFor(photo.id)
-          img.src = api.originalUrl(photo.id)
+          img.src = api.originalUrl(photo)
         }
       },
       () => {},
@@ -122,7 +122,7 @@ export function Viewer({ photo, onClose, onPrev, onNext, onOpen, onChange, onDel
   }, [onClose, onPrev, onNext, editing])
 
   const info = detail?.id === photo.id ? detail : null
-  const src = fullFor === photo.id ? api.originalUrl(photo.id) : api.thumbUrl(photo.hash, 1024)
+  const src = fullFor === photo.id ? api.originalUrl(photo) : api.thumbUrl(photo.hash, 1024)
   const taken = new Date(photo.taken_at)
   const creation = info?.creation ?? null
   const source = creation?.source && sameShape(creation.source, photo) ? creation.source : null
