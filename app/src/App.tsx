@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { Filters, PhotoSummary } from './api'
+import type { Creation, Filters, PhotoSummary } from './api'
+import { Create } from './components/Create'
 import { FilterBar } from './components/FilterBar'
 import { AddFolderForm, FoldersDialog } from './components/Folders'
 import { Galaxy } from './components/Galaxy'
@@ -60,9 +61,9 @@ export default function App() {
       <header className="topbar">
         <h1>Pixora</h1>
         <nav className="tabs" aria-label="Views">
-          {(['photos', 'map', 'galaxy', 'people'] as const).map((v) => (
+          {(['photos', 'map', 'galaxy', 'people', 'create'] as const).map((v) => (
             <button key={v} aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
-              {v === 'photos' ? 'Photos' : v === 'map' ? 'Map' : v === 'galaxy' ? 'Galaxy' : 'People'}
+              {{ photos: 'Photos', map: 'Map', galaxy: 'Galaxy', people: 'People', create: 'Create' }[v]}
             </button>
           ))}
         </nav>
@@ -82,6 +83,8 @@ export default function App() {
             setView('photos')
           }}
         />
+      ) : view === 'create' ? (
+        <Create onOpen={onOpen} onChange={refresh} reuse={reuse} revision={deletions} />
       ) : view === 'map' ? (
         <Map filters={filters} onShowPhoto={onOpen} />
       ) : view === 'galaxy' ? (
@@ -134,7 +137,29 @@ export default function App() {
       )}
 
       <FoldersDialog open={foldersOpen} onClose={() => setFoldersOpen(false)} onChange={refresh} />
-      {openPhoto && <Viewer photo={openPhoto} onClose={close} onPrev={prev} onNext={next} />}
+      {openPhoto && (
+        <Viewer
+          photo={openPhoto}
+          onClose={close}
+          onPrev={prev}
+          onNext={next}
+          onOpen={onOpen}
+          onChange={refresh}
+          onDeleted={() => {
+            // Move on to the next picture when there is one, as a photo app does.
+            if (next) next()
+            else if (prev) prev()
+            else close()
+            setDeletions((n) => n + 1)
+            refresh()
+          }}
+          onReuse={(creation) => {
+            setReuse(creation)
+            setView('create')
+            close()
+          }}
+        />
+      )}
     </div>
   )
 }

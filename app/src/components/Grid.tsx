@@ -1,5 +1,6 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { OriginBadge } from './StudioParts'
 import { api, type PhotoSummary, type Timeline } from '../api'
 import { buildRows, GAP, monthLabel } from '../layout'
 

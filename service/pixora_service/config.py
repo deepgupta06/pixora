@@ -20,6 +20,8 @@ class Config:
     data_dir: Path
     workers: int
     models_dir: Path
+    # Where edited and generated pictures are saved, as ordinary files.
+    creations_dir: Path
 
     @property
     def db_path(self) -> Path:
@@ -37,6 +39,7 @@ class Config:
         data_dir: Path | None = None,
         workers: int | None = None,
         models_dir: Path | None = None,
+        creations_dir: Path | None = None,
     ) -> "Config":
         if workers is None:
             env = os.environ.get("PIXORA_WORKERS")
@@ -47,6 +50,12 @@ class Config:
             env = os.environ.get("PIXORA_MODELS_DIR")
             # Model weights are downloaded here; they are never part of the repository.
             models_dir = Path(env) if env else data_dir / "models"
-        cfg = cls(data_dir=data_dir, workers=workers, models_dir=models_dir)
+        if creations_dir is None:
+            env = os.environ.get("PIXORA_CREATIONS_DIR")
+            # Outside the data folder: these are the user's pictures, not a cache.
+            creations_dir = Path(env) if env else Path.home() / "Pictures" / "Pixora Creations"
+        # Absolute, because the library records each file's full path.
+        creations_dir = Path(os.path.abspath(creations_dir))
+        cfg = cls(data_dir=data_dir, workers=workers, models_dir=models_dir, creations_dir=creations_dir)
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         return cfg
