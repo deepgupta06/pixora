@@ -7,7 +7,7 @@ import {
   type PromptMention,
 } from '../api'
 import { useJob, useStudioStatus } from '../useStudio'
-import { JobProgress, ModelsNeeded, Results } from './StudioParts'
+import { JobProgress, ModelsNeeded, Results, Steps } from './StudioParts'
 
 interface Props {
   onOpen: (photo: PhotoSummary) => void
@@ -42,6 +42,7 @@ export function Create({ onOpen, onChange, reuse }: Props) {
   const [style, setStyle] = useState('')
   const [count, setCount] = useState(1)
   const [seed, setSeed] = useState('')
+  const [steps, setSteps] = useState<number | null>(null)
   const [mentions, setMentions] = useState<PromptMention[]>([])
   const [who, setWho] = useState<Who>(null)
   const [history, setHistory] = useState<Creation[]>([])
@@ -65,6 +66,7 @@ export function Create({ onOpen, onChange, reuse }: Props) {
     setSize(c.params.size ?? 'square')
     setStyle(c.params.style ?? '')
     setSeed(c.params.seed !== undefined ? String(c.params.seed) : '')
+    setSteps(c.params.steps ?? null)
     setWho(c.params.person_id ?? null)
     setCount(1)
   }, [])
@@ -121,6 +123,7 @@ export function Create({ onOpen, onChange, reuse }: Props) {
       size,
       style: style || undefined,
       count,
+      steps: steps ?? undefined,
       seed: seed.trim() ? Number(seed) : undefined,
       person_id: personId,
     })
@@ -223,6 +226,7 @@ export function Create({ onOpen, onChange, reuse }: Props) {
             />
           </label>
         </div>
+        <Steps status={status} value={steps} onChange={setSteps} />
 
         {needed.length > 0 ? (
           <ModelsNeeded status={status} needed={needed} onInstalled={() => setInstalled((n) => n + 1)} />
@@ -261,6 +265,7 @@ export function Create({ onOpen, onChange, reuse }: Props) {
                   status.styles.find((s) => s.id === c.params.style)?.label,
                   status.sizes.find((s) => s.id === c.params.size)?.label,
                   `seed ${c.params.seed}`,
+                  c.params.steps !== undefined && `${c.params.steps} steps`,
                 ]
                   .filter(Boolean)
                   .join(' · ')}

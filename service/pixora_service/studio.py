@@ -37,6 +37,9 @@ log = logging.getLogger("pixora.studio")
 
 EDITED, GENERATED = "edited", "generated"
 MAX_COUNT = 4
+# How many passes the image model makes over a picture. More is slower and, up to a
+# point, more detailed.
+DEFAULT_STEPS, MIN_STEPS, MAX_STEPS = 30, 15, 50
 # Results larger than this gain nothing visible and cost a lot of time.
 MAX_EDIT_SIDE = 4096
 MAX_BACKGROUND_SIDE = 2048
@@ -173,20 +176,21 @@ class StudioEngine(Protocol):
         ...
 
     def inpaint(
-        self, image: Image.Image, mask: Image.Image, prompt: str, negative: str, seed: int, progress: Progress
+        self, image: Image.Image, mask: Image.Image, prompt: str, negative: str, seed: int, progress: Progress,
+        steps: int = DEFAULT_STEPS,
     ) -> Image.Image:
         """Repaint the white part of `mask`. Returns an image of the same size."""
         ...
 
     def restyle(
         self, image: Image.Image, prompt: str, negative: str, style: Style, strength: float, seed: int,
-        progress: Progress,
+        progress: Progress, steps: int = DEFAULT_STEPS,
     ) -> Image.Image:
         ...
 
     def generate(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
-        references: list[identity.Reference], progress: Progress,
+        references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
     ) -> Image.Image:
         """A new picture. With `references`, it shows the person in them."""
         ...
@@ -408,6 +412,10 @@ class Studio:
         if p.get("seed") is None:
             p["seed"] = random.randrange(2**31)
         p["seed"] = int(p["seed"]) % 2**31
+        if operation in ("generate", "stylize", "replace_background", "inpaint", "extend"):
+            p["steps"] = min(max(int(p.get("steps") or DEFAULT_STEPS), MIN_STEPS), MAX_STEPS)
+        else:
+            p.pop("steps", None)
 
         if operation == "generate":
             if not p["prompt"]:
@@ -528,6 +536,7 @@ class Studio:
         self, op: str, p: dict, engine: StudioEngine, source: Image.Image | None, subject: Image.Image | None,
         references: list[identity.Reference], negative: str, seed: int, progress: Progress,
     ) -> Image.Image:
+        steps = p.get("steps", DEFAULT_STEPS)
         if op == "generate":
             style = STYLES.get(p.get("style") or "")
             _, width, height = SIZES[p["size"]]
@@ -540,7 +549,7 @@ class Studio:
             if style:
                 prompt = f"{prompt}, {style.prompt}"
                 negative = ", ".join(x for x in (style.negative, negative) if x)
-            return engine.generate(prompt, negative, width, height, seed, style, references, progress)
+            return engine.generate(prompt, negative, width, height, seed, style, references, progress, steps=steps)
 
         assert source is not None
         if op == "remove_background":
@@ -553,7 +562,7 @@ class Studio:
             work = source.resize(compose.working_size(*source.size), Image.Resampling.LANCZOS)
             # Repaint a little into the subject's outline so no rim of the old background survives.
             background = compose.grow(subject.resize(work.size, Image.Resampling.BILINEAR), -3).point(lambda v: 255 - v)
-            painted = engine.inpaint(work, background, p["prompt"], negative, seed, progress)
+            painted = engine.inpaint(work, background, p["prompt"], negative, seed, progress, steps=steps)
             # The subject keeps its own full-size pixels.
             return Image.composite(source, painted.resize(source.size, Image.Resampling.LANCZOS), subject)
 
@@ -573,7 +582,7 @@ class Studio:
             hint = p["prompt"] or self._scene_hint(p["photo_id"])
             prompt = ", ".join(x for x in (style.prompt, hint) if x)
             style_negative = ", ".join(x for x in (style.negative, negative) if x)
-            return engine.restyle(work, prompt, style_negative, style, p["strength"], seed, progress)
+            return engine.restyle(work, prompt, style_negative, style, p["strength"], seed, progress, steps=steps)
 
         if op == "inpaint":
             mask = decode_mask(p["mask"], source.size)
@@ -589,7 +598,7 @@ class Studio:
                 prompt = "empty background, seamless continuation of the surroundings"
                 negative = ", ".join(("object, person, animal, text", negative))
             painted = engine.inpaint(
-                crop.resize(size, Image.Resampling.LANCZOS), work_mask, prompt, negative, seed, progress
+                crop.resize(size, Image.Resampling.LANCZOS), work_mask, prompt, negative, seed, progress, steps=steps
             )
             # Only the painted area, softened at its edge, replaces the photo's pixels.
             soft = compose.feather(compose.grow(crop_mask, round(8 / scale)), max(2, round(6 / scale)))
@@ -615,7 +624,7 @@ class Studio:
                 small, pads[0], pads[1], size[0] - small.width - pads[0], size[1] - small.height - pads[1]
             )
             prompt = p["prompt"] or self._scene_hint(p["photo_id"]) or "seamless continuation of the scene"
-            painted = engine.inpaint(canvas, mask, prompt, negative, seed, progress)
+            painted = engine.inpaint(canvas, mask, prompt, negative, seed, progress, steps=steps)
             out = painted.resize(full, Image.Resampling.LANCZOS)
             sides = (left > 0, top > 0, right > 0, bottom > 0)
             return compose.keep_original(out, source, (left, top), sides, ramp=max(8, round(24 / scale)))

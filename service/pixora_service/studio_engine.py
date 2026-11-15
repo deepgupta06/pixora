@@ -19,11 +19,10 @@ from PIL import Image
 
 from . import faces as face_engines
 from . import identity, media, model_store
-from .studio import Progress, StudioError, Style
+from .studio import DEFAULT_STEPS, Progress, StudioError, Style
 
 log = logging.getLogger("pixora.studio")
 
-STEPS = 30
 GUIDANCE = 5.0
 # After a picture is painted, each face in it is painted again on its own at full
 # size, which is what gives clear eyes and skin. This is how far that second pass
@@ -185,7 +184,7 @@ class TorchEngine:
             "negative_pooled_prompt_embeds": negative_pooled,
         }
 
-    def _run(self, pipe, progress: Progress, seed: int, steps: int = STEPS, label: str = "Painting", **kwargs) -> Image.Image:
+    def _run(self, pipe, progress: Progress, seed: int, steps: int = DEFAULT_STEPS, label: str = "Painting", **kwargs) -> Image.Image:
         # Img2img and inpainting run only part of the schedule.
         total = max(1, round(steps * float(kwargs.get("strength", 1.0))))
 
@@ -213,7 +212,8 @@ class TorchEngine:
         return pipe.unload_lora_weights
 
     def _detail_faces(
-        self, image: Image.Image, embeds: dict, seed: int, progress: Progress, guidance: float = GUIDANCE
+        self, image: Image.Image, embeds: dict, seed: int, progress: Progress, guidance: float = GUIDANCE,
+        steps: int = DEFAULT_STEPS,
     ) -> Image.Image:
         """Paint every face again, enlarged, and set it back into the picture.
 
@@ -249,7 +249,7 @@ class TorchEngine:
             step = progress.part(n / len(crops), (n + 1) / len(crops))
             face = Image.fromarray(rgb[y : y + side, x : x + side]).resize(full, Image.Resampling.LANCZOS)
             fixed = self._run(
-                pipe, step, seed, label="Refining faces", image=face, strength=FACE_DETAIL_STRENGTH,
+                pipe, step, seed, steps=steps, label="Refining faces", image=face, strength=FACE_DETAIL_STRENGTH,
                 guidance_scale=guidance, **embeds,
             )
             fixed = np.asarray(fixed.resize((side, side), Image.Resampling.LANCZOS), dtype=np.float32)
@@ -406,7 +406,8 @@ class TorchEngine:
     # ---- painting ----------------------------------------------------------
 
     def inpaint(
-        self, image: Image.Image, mask: Image.Image, prompt: str, negative: str, seed: int, progress: Progress
+        self, image: Image.Image, mask: Image.Image, prompt: str, negative: str, seed: int, progress: Progress,
+        steps: int = DEFAULT_STEPS,
     ) -> Image.Image:
         from diffusers import StableDiffusionXLInpaintPipeline
 
@@ -416,13 +417,13 @@ class TorchEngine:
         embeds = self._encode(pipe, prompt, negative)
         self._on_gpu("inpaint_unet", "vae")
         return self._run(
-            pipe, progress, seed, image=image, mask_image=mask.convert("L"), width=image.width, height=image.height,
+            pipe, progress, seed, steps=steps, image=image, mask_image=mask.convert("L"), width=image.width, height=image.height,
             strength=0.99, guidance_scale=7.5, **embeds,
         )
 
     def restyle(
         self, image: Image.Image, prompt: str, negative: str, style: Style, strength: float, seed: int,
-        progress: Progress,
+        progress: Progress, steps: int = DEFAULT_STEPS,
     ) -> Image.Image:
         from diffusers import StableDiffusionXLControlNetImg2ImgPipeline
 
@@ -439,20 +440,22 @@ class TorchEngine:
             self._on_gpu("unet", "vae", "canny")
             paint = progress.part(0.0, 0.8) if style.face_detail else progress
             out = self._run(
-                pipe, paint, seed, image=image, control_image=outline, width=image.width, height=image.height,
+                pipe, paint, seed, steps=steps, image=image, control_image=outline, width=image.width, height=image.height,
                 strength=strength, controlnet_conditioning_scale=CANNY_SCALE, control_guidance_end=CANNY_END,
                 guidance_scale=GUIDANCE, **embeds,
             )
-            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0)) if style.face_detail else out
+            if not style.face_detail:
+                return out
+            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0), steps=steps)
         finally:
             undo()
 
     def generate(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
-        references: list[identity.Reference], progress: Progress,
+        references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
     ) -> Image.Image:
         if references:
-            return self._generate_person(prompt, negative, width, height, seed, style, references, progress)
+            return self._generate_person(prompt, negative, width, height, seed, style, references, progress, steps)
         from diffusers import StableDiffusionXLPipeline
 
         progress.report(0.0, "Loading the image model")
@@ -464,9 +467,10 @@ class TorchEngine:
             embeds = self._encode(pipe, prompt, negative)
             self._on_gpu("unet", "vae")
             out = self._run(
-                pipe, progress.part(0.0, 0.8), seed, width=width, height=height, guidance_scale=GUIDANCE, **embeds
+                pipe, progress.part(0.0, 0.8), seed, steps=steps, width=width, height=height, guidance_scale=GUIDANCE,
+                **embeds,
             )
-            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0))
+            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0), steps=steps)
         finally:
             undo()
 
@@ -528,7 +532,7 @@ class TorchEngine:
 
     def _generate_person(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
-        references: list[identity.Reference], progress: Progress,
+        references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
     ) -> Image.Image:
         from .vendor.instantid_pipeline import StableDiffusionXLInstantIDPipeline, draw_kps
 
@@ -557,7 +561,7 @@ class TorchEngine:
             self._on_gpu("unet", "vae", "identity_net", "image_proj")
             face = torch.from_numpy(embedding)[None]
             out = self._run(
-                pipe, progress.part(0.08, 0.8), seed, image=pose, image_embeds=face, width=width, height=height,
+                pipe, progress.part(0.08, 0.8), seed, steps=steps, image=pose, image_embeds=face, width=width, height=height,
                 controlnet_conditioning_scale=IDENTITY_POSE_SCALE, guidance_scale=IDENTITY_GUIDANCE, **embeds,
             )
             # The second pass on the face keeps following the person: their likeness is
@@ -566,7 +570,7 @@ class TorchEngine:
                 tokens = pipe._encode_prompt_image_emb(face, self.device, self.dtype, True)
             embeds["negative_prompt_embeds"] = torch.cat([embeds["negative_prompt_embeds"], tokens[:1]], dim=1)
             embeds["prompt_embeds"] = torch.cat([embeds["prompt_embeds"], tokens[1:]], dim=1)
-            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0), IDENTITY_GUIDANCE)
+            return self._detail_faces(out, embeds, seed, progress.part(0.8, 1.0), IDENTITY_GUIDANCE, steps)
         finally:
             undo()
             self._plain_attention()

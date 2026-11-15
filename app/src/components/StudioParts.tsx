@@ -138,3 +138,32 @@ export function Compare({ before, after }: { before: string; after: string }) {
     </div>
   )
 }
+
+/** How many passes the image model makes. `value` is null until the user moves it. */
+export function Steps({
+  status,
+  value,
+  onChange,
+}: {
+  status: StudioStatus
+  value: number | null
+  onChange: (n: number) => void
+}) {
+  const steps = value ?? status.default_steps
+  const note = steps < status.default_steps ? 'faster, less detail' : steps > status.default_steps ? 'slower, more detail' : 'balanced'
+  return (
+    <label className="field">
+      <span>
+        Steps: {steps} ({note})
+      </span>
+      <input
+        type="range"
+        min={status.min_steps}
+        max={status.max_steps}
+        step={1}
+        value={steps}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </label>
+  )
+}

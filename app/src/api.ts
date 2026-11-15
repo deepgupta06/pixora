@@ -163,6 +163,8 @@ export interface CreationParams {
   style?: string
   size?: string
   strength?: number
+  /** How many passes the image model makes; more is slower and more detailed. */
+  steps?: number
   seed?: number
   person_id?: number
   person_name?: string
@@ -214,6 +216,9 @@ export interface StudioStatus {
   styles: { id: string; label: string; restyle: boolean; strength: number; installed: boolean }[]
   sizes: { id: string; label: string; width: number; height: number }[]
   max_count: number
+  default_steps: number
+  min_steps: number
+  max_steps: number
   creations_dir: string
 }
 

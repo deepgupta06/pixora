@@ -22,7 +22,7 @@ from .galaxy import POINT_SIZE, people_layout
 from .scanner import ScanManager, repair_primaries
 from .scenes import TAG_FLOOR
 from .search import SearchIndex
-from .studio import MAX_COUNT, SIZES, STYLES, Job, Studio, StudioError
+from .studio import DEFAULT_STEPS, MAX_COUNT, MAX_STEPS, MIN_STEPS, SIZES, STYLES, Job, Studio, StudioError
 
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]", "tauri.localhost", "testserver"}
 _ALLOWED_ORIGINS = [
@@ -271,6 +271,7 @@ class StudioJobRequest(BaseModel):
     style: str | None = None
     size: str | None = None
     strength: float | None = None
+    steps: int | None = None
     seed: int | None = None
     count: int | None = None
     person_id: int | None = None
@@ -325,6 +326,9 @@ class StudioStatus(BaseModel):
     styles: list[StudioStyle]
     sizes: list[StudioSize]
     max_count: int
+    default_steps: int
+    min_steps: int
+    max_steps: int
     creations_dir: str
 
 
@@ -1099,7 +1103,7 @@ def create_app(
                 for s in STYLES.values()
             ],
             sizes=[StudioSize(id=k, label=label, width=w, height=h) for k, (label, w, h) in SIZES.items()],
-            max_count=MAX_COUNT,
+            max_count=MAX_COUNT, default_steps=DEFAULT_STEPS, min_steps=MIN_STEPS, max_steps=MAX_STEPS,
             creations_dir=str(config.creations_dir),
         )
 

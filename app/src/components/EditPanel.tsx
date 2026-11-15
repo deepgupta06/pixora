@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { type PhotoSummary, type StudioJob, type StudioJobRequest, type StudioStatus } from '../api'
 import { useJob, useStudioStatus } from '../useStudio'
-import { JobProgress, ModelsNeeded, Results } from './StudioParts'
+import { JobProgress, ModelsNeeded, Results, Steps } from './StudioParts'
 
 export type EditTool = 'background' | 'quality' | 'style' | 'brush' | 'extend'
 
@@ -150,6 +150,7 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
   const [chosenStrength, setStrength] = useState<number | null>(null)
   const [describe, setDescribe] = useState('')
   const [count, setCount] = useState(1)
+  const [chosenSteps, setSteps] = useState<number | null>(null)
   const [replacement, setReplacement] = useState('')
   const [extend, setExtend] = useState({ left: 0.25, right: 0.25, top: 0, bottom: 0 })
   const [extendPrompt, setExtendPrompt] = useState('')
@@ -169,6 +170,7 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
   const styles = status?.styles.filter((s) => s.restyle) ?? []
   const strength = chosenStrength ?? styles.find((s) => s.id === style)?.strength ?? 0.6
   const max = status?.max_count ?? 1
+  const steps = chosenSteps ?? undefined
 
   return (
     <div className="edit">
@@ -207,9 +209,10 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
                   />
                 </label>
                 <Variations value={count} max={max} onChange={setCount} />
+                <Steps status={status} value={chosenSteps} onChange={setSteps} />
                 <button
                   disabled={active || !background.trim()}
-                  onClick={() => run({ operation: 'replace_background', prompt: background, count })}
+                  onClick={() => run({ operation: 'replace_background', prompt: background, count, steps })}
                 >
                   Change background
                 </button>
@@ -279,9 +282,10 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
                 />
               </label>
               <Variations value={count} max={max} onChange={setCount} />
+                <Steps status={status} value={chosenSteps} onChange={setSteps} />
               <button
                 disabled={active}
-                onClick={() => run({ operation: 'stylize', style, strength, prompt: describe, count })}
+                onClick={() => run({ operation: 'stylize', style, strength, prompt: describe, count, steps })}
               >
                 Apply style
               </button>
@@ -309,13 +313,14 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
                 <input value={replacement} placeholder="a vase of flowers" onChange={(e) => setReplacement(e.target.value)} />
               </label>
               <Variations value={count} max={max} onChange={setCount} />
+                <Steps status={status} value={chosenSteps} onChange={setSteps} />
               <div className="row">
                 <button
                   disabled={active}
                   onClick={() => {
                     const mask = brush.current?.mask()
                     setUnpainted(!mask)
-                    if (mask) run({ operation: 'inpaint', mask, prompt: replacement, count })
+                    if (mask) run({ operation: 'inpaint', mask, prompt: replacement, count, steps })
                   }}
                 >
                   {replacement.trim() ? 'Replace' : 'Remove'}
@@ -356,9 +361,10 @@ export function EditPanel({ photo, tool, onTool, brush, brushSize, onBrushSize, 
                 <input value={extendPrompt} placeholder="more of the garden" onChange={(e) => setExtendPrompt(e.target.value)} />
               </label>
               <Variations value={count} max={max} onChange={setCount} />
+                <Steps status={status} value={chosenSteps} onChange={setSteps} />
               <button
                 disabled={active || !SIDES.some((s) => extend[s] > 0)}
-                onClick={() => run({ operation: 'extend', ...extend, prompt: extendPrompt, count })}
+                onClick={() => run({ operation: 'extend', ...extend, prompt: extendPrompt, count, steps })}
               >
                 Extend
               </button>

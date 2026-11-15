@@ -28,6 +28,7 @@ class FakeStudioEngine:
     def __init__(self):
         self.calls: list[tuple] = []
         self.unloaded = False
+        self.steps: list[int] = []
         self.gate: threading.Event | None = None  # when set, painting waits for it
 
     def _flat(self, size, colour, progress):
@@ -51,15 +52,18 @@ class FakeStudioEngine:
         self.calls.append(("restore_faces", strength))
         return image
 
-    def inpaint(self, image, mask, prompt, negative, seed, progress):
+    def inpaint(self, image, mask, prompt, negative, seed, progress, steps=30):
+        self.steps.append(steps)
         self.calls.append(("inpaint", image.size, mask.size, prompt, seed))
         return self._flat(image.size, (0, 0, 255), progress)
 
-    def restyle(self, image, prompt, negative, style, strength, seed, progress):
+    def restyle(self, image, prompt, negative, style, strength, seed, progress, steps=30):
+        self.steps.append(steps)
         self.calls.append(("restyle", image.size, prompt, style.id, strength, seed))
         return self._flat(image.size, (255, seed % 256, 255), progress)
 
-    def generate(self, prompt, negative, width, height, seed, style, references, progress):
+    def generate(self, prompt, negative, width, height, seed, style, references, progress, steps=30):
+        self.steps.append(steps)
         self.calls.append(("generate", prompt, (width, height), seed, style.id if style else None, references))
         return self._flat((width, height), (seed % 256, 100, 100), progress)
 
@@ -512,3 +516,16 @@ def test_a_model_is_installed_only_when_every_file_is_there(tmp_path):
     assert model_store.missing_for(tmp_path, "generate") == ["sdxl"]
     assert json.dumps(sorted(model_store.FEATURES))  # every feature names known models
     assert all(m in model_store.MODELS for needs in model_store.FEATURES.values() for m in needs)
+
+
+def test_steps_are_passed_on_within_limits_and_recorded(client, one_photo):
+    engine = client.engine
+    run(client, operation="generate", prompt="a tree")
+    run(client, operation="generate", prompt="a tree", steps=40)
+    run(client, operation="generate", prompt="a tree", steps=500)
+    job = run(client, operation="stylize", photo_id=one_photo, style="anime", steps=3)
+    assert engine.steps == [30, 40, 50, 15]
+    detail = client.get(f"/api/photos/{job['results'][0]['id']}").json()
+    assert detail["creation"]["params"]["steps"] == 15
+    status = client.get("/api/studio/status").json()
+    assert (status["min_steps"], status["default_steps"], status["max_steps"]) == (15, 30, 50)
