@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import numpy as np
 from pydantic import BaseModel
 
-from . import __version__, identity, model_store
+from . import __version__, identity, model_store, trash
 from .config import THUMB_SIZES, Config
 from .db import Database
 from .faces import ModelsMissing
@@ -749,6 +749,52 @@ def create_app(
                 )
             ],
         )
+
+    @app.delete("/api/photos/{photo_id}")
+    def delete_creation(photo_id: int) -> dict:
+        """Remove a picture Pixora made: its file, its previews and every record of it.
+
+        The user's own photos are never deleted, here or anywhere.
+        """
+        folder = os.path.normcase(str(config.creations_dir)).rstrip("\\/") + os.sep
+        with db.write() as conn:
+            photo = conn.execute("SELECT content_hash, origin FROM photos WHERE id=?", (photo_id,)).fetchone()
+            if photo is None:
+                raise HTTPException(404, "Photo not found")
+            if photo["origin"] is None:
+                raise HTTPException(403, "Pixora only deletes pictures it made, never your own photos")
+            paths = [r["path"] for r in conn.execute("SELECT path FROM photo_files WHERE photo_id=?", (photo_id,))]
+            if any(not os.path.normcase(os.path.abspath(p)).startswith(folder) for p in paths):
+                raise HTTPException(409, "A copy of this picture is in one of your own folders, so it is kept")
+            face_ids = [r[0] for r in conn.execute("SELECT id FROM faces WHERE photo_id=?", (photo_id,))]
+            marks = ",".join("?" * len(face_ids))
+            conn.execute(f"DELETE FROM face_constraints WHERE face_id IN ({marks})", face_ids)
+            conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
+            # A person whose cover was one of these faces gets another of their faces.
+            conn.execute(
+                f"UPDATE people SET cover_face_id = (SELECT f.id FROM faces f WHERE f.person_id = people.id "
+                f"AND f.dismissed = 0 ORDER BY f.quality DESC, f.size DESC LIMIT 1) WHERE cover_face_id IN ({marks})",
+                face_ids,
+            )
+            for table in ("photo_tags", "photo_embeddings", "jobs", "creations"):
+                conn.execute(f"DELETE FROM {table} WHERE photo_id=?", (photo_id,))
+            # Edits made from this picture stay; they just no longer have a source to compare with.
+            conn.execute("UPDATE creations SET source_photo_id=NULL WHERE source_photo_id=?", (photo_id,))
+            conn.execute("UPDATE photos SET duplicate_of_photo_id=NULL WHERE duplicate_of_photo_id=?", (photo_id,))
+            conn.execute("UPDATE photos SET primary_file_id=NULL WHERE id=?", (photo_id,))
+            conn.execute("DELETE FROM photo_files WHERE photo_id=?", (photo_id,))
+            conn.execute("DELETE FROM photos WHERE id=?", (photo_id,))
+        # The records are gone; whatever is left on disk can no longer be shown.
+        for path in paths:
+            try:
+                trash.discard(path)
+            except OSError:
+                pass
+        leftovers = [config.thumb_path(photo["content_hash"], size) for size in THUMB_SIZES]
+        leftovers += [config.face_crop_path(face_id) for face_id in face_ids]
+        for path in leftovers:
+            path.unlink(missing_ok=True)
+        return {"deleted": photo_id}
 
     @app.get("/api/photos/{photo_id}/original")
     def photo_original(photo_id: int) -> FileResponse:

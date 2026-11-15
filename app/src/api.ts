@@ -347,6 +347,8 @@ export const api = {
   photos: (month: string, f: Filters) =>
     request<PhotoSummary[]>(`/api/photos?month=${month}&${filterQuery(f)}`),
   photo: (id: number) => request<PhotoDetail>(`/api/photos/${id}`),
+  /** Only pictures Pixora made can be deleted. */
+  deleteCreation: (id: number) => request<{ deleted: number }>(`/api/photos/${id}`, 'DELETE'),
   people: () => request<PeopleOverview>('/api/people'),
   question: () => request<Question>('/api/people/question'),
   nameFaces: (faceIds: number[], name: string) =>

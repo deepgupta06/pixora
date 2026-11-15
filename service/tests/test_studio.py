@@ -7,6 +7,7 @@ these tests need no downloads and no graphics card.
 import base64
 import io
 import json
+import os
 import threading
 
 import numpy as np
@@ -376,6 +377,34 @@ def test_generate_records_settings_for_reuse(client):
     assert history[0]["source"] is None
     call = client.engine.calls[0]
     assert call[1].startswith("a red bicycle, cinematic") and call[4] == "cinematic" and call[5] == []
+
+
+def test_deleting_a_created_picture_removes_every_trace_of_it(client, one_photo, monkeypatch):
+    monkeypatch.setattr("pixora_service.trash._recycle", lambda path: False)  # keep the test out of the Recycle Bin
+    first = run(client, operation="generate", prompt="a red bicycle")["results"][0]
+    edit = run(client, operation="enhance", photo_id=first["id"])["results"][0]
+    detail = client.get(f"/api/photos/{first['id']}").json()
+    path = detail["files"][0]["path"]
+    thumb = client.config.thumb_path(first["hash"], 256)
+    assert os.path.isfile(path) and thumb.is_file()
+
+    assert client.delete(f"/api/photos/{first['id']}").json() == {"deleted": first["id"]}
+    assert not os.path.exists(path) and not thumb.exists()
+    assert client.get(f"/api/photos/{first['id']}").status_code == 404
+    assert client.get("/api/studio/history?kind=generated").json() == []
+    assert first["id"] not in photo_ids(client)
+    conn = client.app.state.db.conn()
+    for table in ("photo_files", "faces", "photo_tags", "photo_embeddings", "jobs", "creations"):
+        assert conn.execute(f"SELECT count(*) FROM {table} WHERE photo_id=?", (first["id"],)).fetchone()[0] == 0
+    # The edit made from it stays, without a source.
+    assert client.get(f"/api/photos/{edit['id']}").json()["creation"]["source"] is None
+    assert client.delete(f"/api/photos/{first['id']}").status_code == 404
+
+
+def test_the_users_own_photos_cannot_be_deleted(client, one_photo):
+    path = client.get(f"/api/photos/{one_photo}").json()["files"][0]["path"]
+    assert client.delete(f"/api/photos/{one_photo}").status_code == 403
+    assert os.path.isfile(path) and one_photo in photo_ids(client)
 
 
 def test_generate_needs_a_prompt_and_a_known_size(client):

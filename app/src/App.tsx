@@ -20,6 +20,8 @@ export default function App() {
   const [view, setView] = useState<'photos' | 'map' | 'galaxy' | 'people' | 'create'>('photos')
   // A generated picture whose settings the Create view should start from.
   const [reuse, setReuse] = useState<Creation | null>(null)
+  // Counts created pictures the user deleted, so lists of them are read again.
+  const [deletions, setDeletions] = useState(0)
 
   // Viewer order follows the grid: newest month first, across the loaded months.
   const ordered = useMemo(
@@ -79,7 +81,7 @@ export default function App() {
           }}
         />
       ) : view === 'create' ? (
-        <Create onOpen={onOpen} onChange={refresh} reuse={reuse} />
+        <Create onOpen={onOpen} onChange={refresh} reuse={reuse} revision={deletions} />
       ) : view === 'map' ? (
         <Map filters={filters} onShowPhoto={onOpen} />
       ) : view === 'galaxy' ? (
@@ -140,6 +142,14 @@ export default function App() {
           onNext={next}
           onOpen={onOpen}
           onChange={refresh}
+          onDeleted={() => {
+            // Move on to the next picture when there is one, as a photo app does.
+            if (next) next()
+            else if (prev) prev()
+            else close()
+            setDeletions((n) => n + 1)
+            refresh()
+          }}
           onReuse={(creation) => {
             setReuse(creation)
             setView('create')

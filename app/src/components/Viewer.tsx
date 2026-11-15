@@ -13,6 +13,8 @@ interface Props {
   onOpen: (photo: PhotoSummary) => void
   /** The library gained pictures. */
   onChange: () => void
+  /** This picture, one Pixora made, was deleted. */
+  onDeleted: () => void
   /** Start a new picture from the settings of a generated one. */
   onReuse: (creation: Creation) => void
 }
@@ -43,7 +45,27 @@ function formatSize(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`
 }
 
-export function Viewer({ photo, onClose, onPrev, onNext, onOpen, onChange, onReuse }: Props) {
+export function Viewer({ photo, onClose, onPrev, onNext, onOpen, onChange, onDeleted, onReuse }: Props) {
+  // The picture the user is being asked to confirm deleting, by photo id.
+  const [deleteFor, setDeleteFor] = useState<number | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const confirmDelete = deleteFor === photo.id
+  const remove = () => {
+    setDeleting(true)
+    setDeleteError(null)
+    api.deleteCreation(photo.id).then(
+      () => {
+        setDeleting(false)
+        setDeleteFor(null)
+        onDeleted()
+      },
+      (e: unknown) => {
+        setDeleting(false)
+        setDeleteError(e instanceof Error ? e.message : 'Could not delete this picture')
+      },
+    )
+  }
   const [editing, setEditing] = useState(false)
   const [tool, setTool] = useState<EditTool>('background')
   const [brushSize, setBrushSize] = useState(40)
@@ -201,6 +223,29 @@ export function Viewer({ photo, onClose, onPrev, onNext, onOpen, onChange, onReu
                     </div>
                   </>
                 )}
+                <div className="row creation-actions">
+                  {confirmDelete ? (
+                    <>
+                      <span>Delete this picture?</span>
+                      <button className="danger" disabled={deleting} onClick={remove}>
+                        {deleting ? 'Deleting…' : 'Yes, delete'}
+                      </button>
+                      <button disabled={deleting} onClick={() => setDeleteFor(null)}>
+                        Keep
+                      </button>
+                    </>
+                  ) : (
+                    <button className="link danger-link" onClick={() => (setDeleteError(null), setDeleteFor(photo.id))}>
+                      Delete this picture
+                    </button>
+                  )}
+                </div>
+                {confirmDelete && (
+                  <div className="muted">
+                    It leaves the library and its file goes to the Recycle Bin. Your own photos are not touched.
+                  </div>
+                )}
+                {confirmDelete && deleteError && <div className="form-error">{deleteError}</div>}
               </dd>
             </>
           )}

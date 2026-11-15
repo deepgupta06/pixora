@@ -15,6 +15,8 @@ interface Props {
   onChange: () => void
   /** Settings of an earlier picture to start from. */
   reuse: Creation | null
+  /** Changes when a created picture is deleted, so the list here is read again. */
+  revision: number
 }
 
 /** Who the picture should show: a person, nobody, or not decided yet. */
@@ -32,7 +34,7 @@ function Face({ person, selected, onPick }: { person: PersonCandidate; selected:
   )
 }
 
-export function Create({ onOpen, onChange, reuse }: Props) {
+export function Create({ onOpen, onChange, reuse, revision }: Props) {
   const [installed, setInstalled] = useState(0)
   const status = useStudioStatus(installed)
 
@@ -61,7 +63,7 @@ export function Create({ onOpen, onChange, reuse }: Props) {
   useEffect(() => {
     const id = setTimeout(loadHistory, 0)
     return () => clearTimeout(id)
-  }, [loadHistory])
+  }, [loadHistory, revision])
 
   const fill = useCallback((c: Creation) => {
     setPrompt(c.params.prompt ?? '')

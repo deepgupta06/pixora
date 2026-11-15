@@ -913,6 +913,14 @@ button[aria-selected='true'] {
   margin-top: 4px;
   gap: 14px;
 }
+.danger-link {
+  color: var(--danger);
+}
+button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #1a1a1a;
+}
 .brush-canvas {
   position: absolute;
   opacity: 0.55;
