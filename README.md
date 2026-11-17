@@ -76,8 +76,10 @@ npm install
 npm run tauri dev
 ```
 
-The shell starts the service from `service/.venv` and stops it on exit. Packaging
-the service into the installer is part of the release phase.
+The shell starts the service from `service/.venv` and stops it on exit. The window
+opens once the service answers. If the service stops while starting, or has not
+answered after 60 seconds, the window opens anyway so the problem is visible.
+Packaging the service into the installer is part of the release phase.
 
 ## Running in a browser
 
