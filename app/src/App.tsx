@@ -18,7 +18,11 @@ export default function App() {
   const { status, timeline, months, offline, loadMonth, poll } = useLibrary(filters)
   const [foldersOpen, setFoldersOpen] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
-  const [view, setView] = useState<'photos' | 'map' | 'galaxy' | 'people'>('photos')
+  const [view, setView] = useState<'photos' | 'map' | 'galaxy' | 'people' | 'create'>('photos')
+  // A generated picture whose settings the Create view should start from.
+  const [reuse, setReuse] = useState<Creation | null>(null)
+  // Counts created pictures the user deleted, so lists of them are read again.
+  const [deletions, setDeletions] = useState(0)
   const [privateMode, setPrivateMode] = useState(false)
 
   // Viewer order follows the grid: newest month first, across the loaded months.

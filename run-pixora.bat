@@ -4,13 +4,23 @@ rem The shell starts the local service itself and stops it when the window close
 setlocal
 title Pixora launcher
 
-rem Where the code is: the folder in PIXORA_ROOT when that is set, else next to
-rem this file, else a sibling folder (another git worktree) that holds the app.
-set "ROOT=%~dp0"
-if defined PIXORA_ROOT set "ROOT=%PIXORA_ROOT%\"
-if not exist "%ROOT%app\src-tauri\tauri.conf.json" (
-  for /d %%D in ("%~dp0..\*") do if exist "%%D\app\src-tauri\tauri.conf.json" set "ROOT=%%D\"
+rem Where the code is: the folder in PIXORA_ROOT when that is set. Otherwise the
+rem first folder that holds the app and its service environment, looking next to
+rem this file, then in the main checkout (when this file is in a git worktree
+rem under .claude\worktrees), then in the sibling worktrees. If none is ready to
+rem run, the first folder with the app is used, so the checks below say what is
+rem missing.
+set "ROOT="
+if defined PIXORA_ROOT (
+  set "ROOT=%PIXORA_ROOT%\"
+  goto :found
 )
+for %%M in (ready app) do (
+  call :pick %%M "%~dp0" && goto :found
+  for %%I in ("%~dp0..\..\..") do call :pick %%M "%%~fI\" && goto :found
+  for /d %%D in ("%~dp0..\*") do call :pick %%M "%%~fD\" && goto :found
+)
+:found
 if not exist "%ROOT%app\src-tauri\tauri.conf.json" (
   echo Could not find the Pixora app folder. Put this file next to the "app" and
   echo "service" folders, or set PIXORA_ROOT to the folder that holds them.
@@ -66,3 +76,12 @@ if errorlevel 1 (
   pause
 )
 endlocal
+exit /b
+
+rem :pick ready|app FOLDER -- use FOLDER if it holds the app (and, for "ready",
+rem the service environment too).
+:pick
+if not exist "%~2app\src-tauri\tauri.conf.json" exit /b 1
+if "%~1"=="ready" if not exist "%~2service\.venv\Scripts\python.exe" exit /b 1
+set "ROOT=%~2"
+exit /b 0
