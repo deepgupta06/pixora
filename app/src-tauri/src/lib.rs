@@ -4,12 +4,16 @@
 use std::net::{SocketAddr, TcpStream};
 use std::process::{Child, Command};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use tauri::{Manager, RunEvent};
+use tauri::{AppHandle, Manager, RunEvent, WebviewWindowBuilder};
 
 /// Must match the default in `service/pixora_service/__main__.py` and `src/api.ts`.
 const SERVICE_PORT: u16 = 8732;
+
+/// How long the window waits for a service this shell started before opening
+/// anyway. A start with nothing cached yet can take well over ten seconds.
+const SERVICE_START_LIMIT: Duration = Duration::from_secs(60);
 
 /// The service process, when this shell started it.
 struct Service(Mutex<Option<Child>>);
@@ -74,15 +78,65 @@ fn start_service() -> Option<Child> {
     }
 }
 
+/// Waits until the service this shell started answers, stops, or runs out of time.
+fn wait_for_service(app: &AppHandle) {
+    eprintln!("pixora: waiting for the local service to answer on port {SERVICE_PORT}");
+    let deadline = Instant::now() + SERVICE_START_LIMIT;
+    while !service_is_up() {
+        let exited = app
+            .state::<Service>()
+            .0
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|child| child.try_wait().ok().flatten());
+        if let Some(status) = exited {
+            eprintln!("pixora: the local service stopped while starting ({status})");
+            return;
+        }
+        if Instant::now() >= deadline {
+            eprintln!(
+                "pixora: the local service did not answer within {} s, opening the window anyway",
+                SERVICE_START_LIMIT.as_secs()
+            );
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Opens the windows that `tauri.conf.json` leaves to the shell (`"create": false`).
+fn open_windows(app: &AppHandle) {
+    for config in app.config().app.windows.iter().filter(|w| !w.create) {
+        if let Err(err) = WebviewWindowBuilder::from_config(app, config).and_then(|w| w.build()) {
+            eprintln!("pixora: could not open the window: {err}");
+            app.exit(1);
+            return;
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Service(Mutex::new(None)))
         .setup(|app| {
-            // The UI shows "service is not running" until the port answers, so
-            // there is no need to block the window on startup.
-            *app.state::<Service>().0.lock().unwrap() = start_service();
+            let child = start_service();
+            let started = child.is_some();
+            *app.state::<Service>().0.lock().unwrap() = child;
+            // Open the window once the service answers, so the UI never starts
+            // against a closed port and reports a service that is only starting
+            // as not running. A service that was already running, or none to
+            // start, has nothing to wait for. Tauri recommends creating windows
+            // from a separate thread on Windows.
+            let app = app.handle().clone();
+            std::thread::spawn(move || {
+                if started {
+                    wait_for_service(&app);
+                }
+                open_windows(&app);
+            });
             Ok(())
         })
         .build(tauri::generate_context!())

@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "create": false,
         "title": "Pixora",
         "width": 1280,
         "height": 820,

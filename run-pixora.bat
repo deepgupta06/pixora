@@ -1,6 +1,7 @@
 @echo off
 rem Starts Pixora as a desktop window (Tauri shell in development mode).
-rem The shell starts the local service itself and stops it when the window closes.
+rem The shell starts the local service itself, opens the window once the service
+rem answers, and stops the service when the window closes.
 setlocal
 title Pixora launcher
 
@@ -67,7 +68,7 @@ if not exist node_modules (
 )
 
 echo Starting Pixora. The first start compiles the shell and can take a few minutes.
-echo Close the Pixora window to stop.
+echo The window opens once the local service is ready. Close it to stop Pixora.
 call npm run tauri dev
 if errorlevel 1 (
   echo.
