@@ -30,6 +30,7 @@ class FakeStudioEngine:
         self.calls: list[tuple] = []
         self.unloaded = False
         self.steps: list[int] = []
+        self.builds: list[str | None] = []
         self.gate: threading.Event | None = None  # when set, painting waits for it
 
     def _flat(self, size, colour, progress):
@@ -66,9 +67,12 @@ class FakeStudioEngine:
     def expand(self, prompt, seed):
         return f"{prompt}, EXPANDED"
 
-    def generate(self, prompt, negative, width, height, seed, style, references, progress, steps=30, extras=()):
+    def generate(
+        self, prompt, negative, width, height, seed, style, references, progress, steps=30, extras=(), build=None
+    ):
         self.steps.append(steps)
         self.extras = extras
+        self.builds.append(build)
         self.calls.append(("generate", prompt, (width, height), seed, style.id if style else None, references))
         return self._flat((width, height), (seed % 256, 100, 100), progress)
 
@@ -515,6 +519,27 @@ def test_generate_a_named_person_uses_their_reference_faces(client):
     assert all(r.path and r.path.startswith(str(client.lib)) for r in references)
     params = client.get(f"/api/photos/{job['results'][0]['id']}").json()["creation"]["params"]
     assert params["person_id"] == amit and params["person_name"] == "Amit"
+
+
+def test_a_build_is_passed_on_for_a_named_person_and_recorded(client):
+    for n in range(4):
+        make_photo(client.lib / f"a{n}.png", "A", n=n)
+    scan(client)
+    q = client.get("/api/people/question").json()
+    amit = client.post("/api/people/name", json={"face_ids": q["face_ids"], "name": "Amit"}).json()["person_id"]
+
+    job = run(client, operation="generate", prompt="Amit on a beach", person_id=amit, build="fuller")
+    assert client.engine.builds[-1] == "fuller"
+    assert client.get(f"/api/photos/{job['results'][0]['id']}").json()["creation"]["params"]["build"] == "fuller"
+
+    # A body means nothing without a person to give it to.
+    job = run(client, operation="generate", prompt="a beach", build="fuller")
+    assert client.engine.builds[-1] is None
+    assert "build" not in client.get(f"/api/photos/{job['results'][0]['id']}").json()["creation"]["params"]
+
+    assert client.post("/api/studio/jobs", json={"operation": "generate", "prompt": "x", "build": "huge"}).status_code == 400
+    builds = client.get("/api/studio/status").json()["builds"]
+    assert [b["id"] for b in builds] == ["slim", "average", "athletic", "fuller", "larger"]
 
 
 def test_generated_pictures_of_a_person_are_never_used_as_references(client):

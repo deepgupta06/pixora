@@ -173,6 +173,8 @@ export interface CreationParams {
   seed?: number
   person_id?: number
   person_name?: string
+  /** The body the user asked for the person: a key of the builds in the studio status. */
+  build?: string
   left?: number
   top?: number
   right?: number
@@ -226,6 +228,7 @@ export interface StudioStatus {
   styles: { id: string; label: string; restyle: boolean; strength: number; installed: boolean }[]
   sizes: { id: string; label: string; width: number; height: number }[]
   max_count: number
+  builds: { id: string; label: string }[]
   default_steps: number
   min_steps: number
   max_steps: number
