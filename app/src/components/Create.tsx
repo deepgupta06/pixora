@@ -7,10 +7,10 @@ import {
   type PromptMention,
   type StudioJob,
 } from '../api'
-import { base64ToBlob, saveBlob } from '../saveFile'
+import { base64ToBlob, fileToBase64, saveBlob, type SaveOptions } from '../saveFile'
 import { useJob, useStudioStatus } from '../useStudio'
 import { IncognitoViewer, type Held } from './IncognitoViewer'
-import { KeyDialog } from './Locked'
+import { KeyDialog, SaveReadyDialog } from './Locked'
 import { JobProgress, ModelsNeeded, Results, Steps } from './StudioParts'
 
 interface Props {
@@ -23,15 +23,27 @@ interface Props {
   revision: number
 }
 
+/** What came of putting a file where the user chose, outside Pixora. */
+type Saved = 'written' | 'handed-over' | 'cancelled'
+type Put = (blob: Blob, options: SaveOptions) => Promise<Saved>
+
 /** Let the user put an unsaved picture wherever they like, outside Pixora. */
-async function saveAs(url: string) {
+async function saveAs(url: string, put: Put) {
   const blob = await fetch(url, { cache: 'no-store' }).then((r) => {
     if (!r.ok) throw new Error('That picture is no longer held')
     return r.blob()
   })
   // A neutral name: the description must not end up in a file name.
-  return saveBlob(blob, { name: 'picture.jpg', description: 'JPEG picture', mime: 'image/jpeg', ext: '.jpg' })
+  return put(blob, { name: 'picture.jpg', description: 'JPEG picture', mime: 'image/jpeg', ext: '.jpg' })
 }
+
+/** How a file of locked pictures is offered for saving. */
+const lockedFile = (name: string): SaveOptions => ({
+  name,
+  description: 'Pixora locked pictures',
+  mime: 'application/octet-stream',
+  ext: '.pxlock',
+})
 
 /** Who the picture should show: a person, nobody, or not decided yet. */
 type Who = number | 'nobody' | null
@@ -78,6 +90,11 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
   const [heldError, setHeldError] = useState<string | null>(null)
   // The key to a file of locked pictures, shown once and then gone.
   const [lockedKey, setLockedKey] = useState<{ key: string; count: number } | null>(null)
+  // A file that has been made but not yet put anywhere, because the browser wants a fresh
+  // click before it opens its save window.
+  const [ready, setReady] = useState<{ blob: Blob; options: SaveOptions; done: (result: Saved) => void } | null>(null)
+  // What last came of adding pictures to a locked file.
+  const [message, setMessage] = useState<string | null>(null)
   const loadHeld = useCallback(
     () =>
       api.jobs().then(
@@ -120,8 +137,9 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
     () => heldJobs.flatMap((j) => j.held.map((h) => ({ job_id: j.id, index: h.index }))),
     [heldJobs],
   )
-  const afterHeld = (action: Promise<unknown>) =>
-    action.then(
+  const afterHeld = (action: Promise<unknown>) => {
+    setMessage(null)
+    return action.then(
       () => {
         setHeldError(null)
         void loadHeld()
@@ -131,6 +149,15 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
         void loadHeld()
       },
     )
+  }
+
+  // Let the user put a file somewhere. The browser opens its save window only for a click it
+  // saw a moment ago, and making the file can take longer, so then another click is asked for.
+  const putSomewhere: Put = async (blob, options) => {
+    const first = await saveBlob(blob, options)
+    if (first !== 'needs-click') return first
+    return new Promise<Saved>((done) => setReady({ blob, options, done }))
+  }
 
   // Encrypt held pictures together under one key and let the user put the file where they
   // like. Only once it is written are the pictures let go, and the key is shown then and
@@ -138,23 +165,41 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
   const saveLocked = (refs: Held[]) =>
     afterHeld(
       api.lockPictures(refs).then(async ({ key, name, count, data }) => {
-        const result = await saveBlob(base64ToBlob(data, 'application/octet-stream'), {
-          name,
-          description: 'Pixora locked pictures',
-          mime: 'application/octet-stream',
-          ext: '.pxlock',
-        })
+        const result = await putSomewhere(base64ToBlob(data, 'application/octet-stream'), lockedFile(name))
         if (result === 'cancelled') return
         setLockedKey({ key, count })
         await Promise.all(refs.map((r) => api.discardHeld(r.job_id, r.index).catch(() => undefined)))
       }),
     )
 
+  // Add held pictures to a locked file the user already has, under that file's own key. The new
+  // file is made first, and a wrong key or a damaged file is refused here, with a message for
+  // the dialog, before anything changes. Only once the new file is written are the pictures let
+  // go. The key serves that one request and is kept nowhere.
+  const addToLocked = async (file: File, key: string, refs: Held[]) => {
+    const made = await api.addLocked(await fileToBase64(file), key, refs)
+    void afterHeld(
+      putSomewhere(base64ToBlob(made.data, 'application/octet-stream'), lockedFile(file.name)).then(async (result) => {
+        if (result === 'cancelled') {
+          setMessage('Nothing was changed. The pictures are still held.')
+          return
+        }
+        await Promise.all(refs.map((r) => api.discardHeld(r.job_id, r.index).catch(() => undefined)))
+        const added = made.added === 1 ? 'Added the picture' : `Added ${made.added} pictures`
+        setMessage(
+          result === 'written'
+            ? `${added}. The file now holds ${made.total}, and the same key opens them all.`
+            : `${added} in a new file, which your browser downloaded. The old file is unchanged. The new one holds ${made.total}, and the same key opens them all.`,
+        )
+      }),
+    )
+  }
+
   // Save one held picture where the user likes. Once the file is written, Pixora has no
   // reason to go on holding it.
   const saveHeld = (r: Held) =>
     afterHeld(
-      saveAs(api.heldUrl(r.job_id, r.index)).then((result) =>
+      saveAs(api.heldUrl(r.job_id, r.index), putSomewhere).then((result) =>
         result === 'written' ? api.discardHeld(r.job_id, r.index) : undefined,
       ),
     )
@@ -246,8 +291,10 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
           incognito={incognito}
           held={allHeld}
           error={heldError}
+          message={message}
           onSave={(r) => void saveHeld(r)}
           onLock={(refs) => void saveLocked(refs)}
+          onAdd={addToLocked}
           onDiscard={(refs) => void afterHeld(Promise.all(refs.map((r) => api.discardHeld(r.job_id, r.index))))}
         />
         <h2>Create a picture</h2>
@@ -422,6 +469,16 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
         {undecided && <p className="muted">Choose who the picture should show first.</p>}
         {job?.state === 'cancelled' && <p className="muted">Cancelled. Nothing was saved.</p>}
         {error && <p className="form-error">{error}</p>}
+        {ready && (
+          <SaveReadyDialog
+            blob={ready.blob}
+            options={ready.options}
+            onDone={(result) => {
+              setReady(null)
+              ready.done(result)
+            }}
+          />
+        )}
         {lockedKey && <KeyDialog value={lockedKey.key} count={lockedKey.count} onDone={() => setLockedKey(null)} />}
         {job?.state === 'done' && !job.incognito && (
           <section>

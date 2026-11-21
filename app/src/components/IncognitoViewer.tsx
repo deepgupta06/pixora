@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { saveBlob } from '../saveFile'
-import { UnlockDialog, type Opened } from './Locked'
+import { AddDialog, UnlockDialog, type Opened } from './Locked'
 
 /** A picture the service holds in memory for the user, not saved anywhere. */
 export interface Held {
@@ -31,8 +31,12 @@ interface Props {
   incognito: boolean
   held: Held[]
   error: string | null
+  /** What last came of putting pictures in a locked file. */
+  message: string | null
   onSave: (picture: Held) => void
   onLock: (pictures: Held[]) => void
+  /** Adds pictures to a locked file under its key. Refuses, with a message, for a wrong key. */
+  onAdd: (file: File, key: string, pictures: Held[]) => Promise<void>
   onDiscard: (pictures: Held[]) => void
 }
 
@@ -41,14 +45,17 @@ interface Props {
  * thumbnails below. Pictures opened from a locked file join them, in memory only, and are
  * forgotten when this screen is left.
  */
-export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDiscard }: Props) {
+export function IncognitoViewer({ incognito, held, error, message, onSave, onLock, onAdd, onDiscard }: Props) {
   const [opened, setOpened] = useState<Item[]>([])
   const [file, setFile] = useState<File | null>(null)
+  // The locked file that the ticked pictures are to be added to.
+  const [addFile, setAddFile] = useState<File | null>(null)
   const [current, setCurrent] = useState(0)
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const [maximized, setMaximized] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const picker = useRef<HTMLInputElement>(null)
+  const addPicker = useRef<HTMLInputElement>(null)
   const nextId = useRef(1)
 
   const items = useMemo<Item[]>(
@@ -138,7 +145,7 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
     ])
 
   // Nothing to show, and not in incognito mode: the viewer is not here.
-  if (!incognito && n === 0 && !file) return null
+  if (!incognito && n === 0 && !file && !message) return null
 
   const frozen = { onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault() }
 
@@ -164,6 +171,17 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
               >
                 Lock selected{chosen.length > 0 ? ` (${chosen.length})` : ''}…
               </button>
+              <button
+                disabled={chosen.length === 0}
+                onClick={() => addPicker.current?.click()}
+                title={
+                  chosen.length === 0
+                    ? 'Tick the pictures to add first'
+                    : 'Add the ticked pictures to a locked file you already have, under its key'
+                }
+              >
+                Add to locked file{chosen.length > 0 ? ` (${chosen.length})` : ''}…
+              </button>
             </>
           )}
           <button onClick={() => picker.current?.click()}>Open locked pictures…</button>
@@ -185,6 +203,25 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
         }}
       />
       {file && <UnlockDialog file={file} onClose={() => setFile(null)} onOpened={add} />}
+      <input
+        ref={addPicker}
+        type="file"
+        accept=".pxlock"
+        hidden
+        onChange={(e) => {
+          const chosenFile = e.target.files?.[0]
+          e.target.value = '' // so the same file can be chosen again
+          if (chosenFile) setAddFile(chosenFile)
+        }}
+      />
+      {addFile && (
+        <AddDialog
+          file={addFile}
+          count={chosen.length}
+          onClose={() => setAddFile(null)}
+          onAdd={(key) => onAdd(addFile, key, chosen)}
+        />
+      )}
 
       <div className="inc-stage" {...frozen}>
         {item ? (
@@ -237,7 +274,10 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
       )}
 
       {held.length > 1 && (
-        <p className="muted inc-hint">Tick the pictures to lock together, then press Lock selected: one key opens them all.</p>
+        <p className="muted inc-hint">
+          Tick the pictures to lock together, then press Lock selected: one key opens them all. Add to locked file puts
+          them in a locked file you already have instead.
+        </p>
       )}
       {n > 0 && (
         <div className="inc-strip" role="list" {...frozen}>
@@ -273,9 +313,15 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
 
       <p className="muted">
         Held in memory only. Save puts a picture in a folder you choose; it is not added to Pixora. Lock selected puts
-        the ticked pictures in one encrypted file under one key, shown once, that only Pixora can open. Pictures opened
-        from a locked file are forgotten when you leave this screen.
+        the ticked pictures in one encrypted file under one key, shown once, that only Pixora can open; Add to locked
+        file puts them in one you already have, under its key. Pictures opened from a locked file are forgotten when you
+        leave this screen.
       </p>
+      {message && !error && !note && (
+        <p className="inc-message" role="status">
+          {message}
+        </p>
+      )}
       {(error || note) && <p className="form-error">{error ?? note}</p>}
     </section>
   )
