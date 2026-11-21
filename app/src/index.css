@@ -922,6 +922,62 @@ button[aria-selected='true'] {
 .held-item figcaption {
   margin-top: 6px;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.lock-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+.lock-dialog.lock-open {
+  width: min(900px, calc(100vw - 32px));
+}
+.lock-dialog.lock-open img {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  margin: 12px auto;
+  border-radius: 6px;
+}
+.lock-key {
+  margin: 12px 0 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 17px;
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+  user-select: all;
+}
+.lock-copy {
+  align-items: center;
+  gap: 10px;
+}
+.lock-warning {
+  color: var(--warn);
+}
+.lock-actions {
+  margin-top: 14px;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.lock-key-input {
+  width: 100%;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  letter-spacing: 0.04em;
+}
+.lock-details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.lock-details dt {
+  color: var(--muted);
+}
+.lock-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .held-zoom {
   position: fixed;

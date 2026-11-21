@@ -7,6 +7,7 @@ these tests need no downloads and no graphics card.
 import base64
 import io
 import json
+import logging
 import os
 import threading
 
@@ -485,6 +486,37 @@ def test_a_cancelled_incognito_job_holds_nothing(client):
     client.engine.gate.set()
     done = client.app.state.studio.wait(job["id"])
     assert done.state == "cancelled" and done.private == [] and done.params == {}
+
+
+def test_a_library_that_prints_the_description_is_silenced_for_an_incognito_job(client):
+    seen = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            seen.append(record.getMessage())
+
+    library = logging.getLogger("diffusers")  # like the real one: its own handler, not passed upwards
+    collect = Collect()
+    library.addHandler(collect)
+    library.propagate = False
+    original = client.engine.generate
+
+    def chatty(prompt, *args, **kwargs):
+        # What diffusers does: set its own level when first imported, then warn with the cut-off text.
+        library.setLevel(logging.WARNING)
+        logging.getLogger("diffusers.pipelines.sdxl").warning("The following part was truncated: %s", prompt)
+        return original(prompt, *args, **kwargs)
+
+    client.engine.generate = chatty
+    try:
+        run(client, operation="generate", prompt="a very private description", incognito=True)
+        assert seen == [] and logging.root.manager.disable == 0  # silenced, and only for that job
+        run(client, operation="generate", prompt="a harmless description")
+        assert len(seen) == 1 and "harmless" in seen[0]
+    finally:
+        library.removeHandler(collect)
+        library.propagate = True
+        library.setLevel(logging.NOTSET)
 
 
 def test_generate_needs_a_prompt_and_a_known_size(client):

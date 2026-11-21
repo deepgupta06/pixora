@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -15,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 import numpy as np
 from pydantic import BaseModel
 
-from . import __version__, appearance, identity, model_store, trash
+from . import __version__, appearance, identity, locked, model_store, trash
 from .config import THUMB_SIZES, Config
 from .db import Database
 from .faces import ModelsMissing
@@ -291,6 +292,11 @@ class StudioJobRequest(BaseModel):
     incognito: bool | None = None
     # For a picture of a known person: the body to give them, a key of the builds in the status.
     build: str | None = None
+
+
+class OpenLocked(BaseModel):
+    data: str  # the bytes of a locked file, as base64
+    key: str
 
 
 class HeldPicture(BaseModel):
@@ -1363,6 +1369,46 @@ def create_app(
     def studio_discard_all(job_id: int) -> dict:
         studio_call(lambda: studio.discard(job_id))
         return {"discarded": True}
+
+    # Locked pictures: an incognito picture, encrypted. Nothing here may reach the disk, the
+    # library, the scanner or the log, so none of it goes through `Studio.keep` or `save`.
+    kept_nowhere = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
+
+    @app.post("/api/studio/jobs/{job_id}/held/{index}/lock")
+    def studio_lock(job_id: int, index: int) -> JSONResponse:
+        """A held picture as the bytes of a locked file, with the key that opens it.
+
+        The key is made here, returned once and kept nowhere. The picture is not discarded:
+        the caller does that once the file has been written somewhere.
+        """
+        image, settings = studio_call(lambda: studio.held_picture(job_id, index))
+        key = locked.new_key()
+        try:
+            data = locked.seal(image, settings, key)
+        except locked.LockedError as e:
+            raise HTTPException(e.status, str(e)) from None
+        return JSONResponse(
+            {
+                "key": locked.format_key(key),
+                "name": locked.random_name(),
+                "data": base64.b64encode(data).decode("ascii"),
+            },
+            headers=kept_nowhere,
+        )
+
+    @app.post("/api/studio/locked/open")
+    def studio_open_locked(body: OpenLocked) -> JSONResponse:
+        """The picture in a locked file, decrypted in memory and sent so the browser keeps no copy."""
+        try:
+            key = locked.parse_key(body.key)
+            png, settings = locked.unseal(base64.b64decode(body.data, validate=True), key)
+        except locked.LockedError as e:
+            raise HTTPException(e.status, str(e)) from None
+        except ValueError:  # the file did not arrive as base64
+            raise HTTPException(400, locked.WRONG) from None
+        return JSONResponse(
+            {"image": base64.b64encode(png).decode("ascii"), "settings": settings}, headers=kept_nowhere
+        )
 
     @app.get("/api/studio/history")
     def studio_history(kind: str | None = None, limit: int = 60) -> list[Creation]:

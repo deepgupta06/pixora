@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   type Creation,
@@ -7,7 +7,9 @@ import {
   type PromptMention,
   type StudioJob,
 } from '../api'
+import { base64ToBlob, saveBlob } from '../saveFile'
 import { useJob, useStudioStatus } from '../useStudio'
+import { KeyDialog, OpenLocked } from './Locked'
 import { JobProgress, ModelsNeeded, Results, Steps } from './StudioParts'
 
 interface Props {
@@ -20,46 +22,14 @@ interface Props {
   revision: number
 }
 
-/**
- * Let the user put an unsaved picture wherever they like, outside Pixora. Returns whether
- * the file is known to have been written: with the plain download that older browsers fall
- * back to, the browser does not say.
- */
-async function saveAs(url: string): Promise<'written' | 'handed-over' | 'cancelled'> {
+/** Let the user put an unsaved picture wherever they like, outside Pixora. */
+async function saveAs(url: string) {
   const blob = await fetch(url, { cache: 'no-store' }).then((r) => {
     if (!r.ok) throw new Error('That picture is no longer held')
     return r.blob()
   })
   // A neutral name: the description must not end up in a file name.
-  const name = 'picture.jpg'
-  const picker = (
-    window as unknown as {
-      showSaveFilePicker?: (options: object) => Promise<{
-        createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>
-      }>
-    }
-  ).showSaveFilePicker
-  if (picker) {
-    try {
-      const handle = await picker({
-        suggestedName: name,
-        types: [{ description: 'JPEG picture', accept: { 'image/jpeg': ['.jpg'] } }],
-      })
-      const file = await handle.createWritable()
-      await file.write(blob)
-      await file.close()
-      return 'written'
-    } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') return 'cancelled'
-      throw e
-    }
-  }
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = name
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(link.href), 10_000)
-  return 'handed-over'
+  return saveBlob(blob, { name: 'picture.jpg', description: 'JPEG picture', mime: 'image/jpeg', ext: '.jpg' })
 }
 
 /** Who the picture should show: a person, nobody, or not decided yet. */
@@ -106,6 +76,10 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
   const [heldJobs, setHeldJobs] = useState<StudioJob[]>([])
   const [zoom, setZoom] = useState<string | null>(null)
   const [heldError, setHeldError] = useState<string | null>(null)
+  // A locked picture's key, shown once and then gone; and a locked file waiting for its key.
+  const [lockedKey, setLockedKey] = useState<string | null>(null)
+  const [lockedFile, setLockedFile] = useState<File | null>(null)
+  const lockedPicker = useRef<HTMLInputElement>(null)
   const loadHeld = useCallback(
     () =>
       api.jobs().then(
@@ -155,6 +129,23 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
         setHeldError(e instanceof Error ? e.message : 'That did not work')
         void loadHeld()
       },
+    )
+
+  // Encrypt a held picture and let the user put the file where they like. Only once it is
+  // written is the picture let go, and the key is shown then and nowhere else.
+  const saveLocked = (jobId: number, index: number) =>
+    afterHeld(
+      api.lockHeld(jobId, index).then(async ({ key, name, data }) => {
+        const result = await saveBlob(base64ToBlob(data, 'application/octet-stream'), {
+          name,
+          description: 'Pixora locked picture',
+          mime: 'application/octet-stream',
+          ext: '.pxlock',
+        })
+        if (result === 'cancelled') return
+        setLockedKey(key)
+        await api.discardHeld(jobId, index)
+      }),
     )
 
   const fill = useCallback((c: Creation) => {
@@ -398,6 +389,21 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
               ? 'Nothing is written to disk or to the library, and no record is kept of the description. The picture is held in memory until you save or discard it, and is gone when Pixora closes.'
               : 'Make pictures without keeping any record, and save only the ones you choose.'}
           </p>
+          <div className="row">
+            <button onClick={() => lockedPicker.current?.click()}>Open locked picture…</button>
+            <span className="muted">A .pxlock file, with its key.</span>
+          </div>
+          <input
+            ref={lockedPicker}
+            type="file"
+            accept=".pxlock"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              e.target.value = '' // so the same file can be chosen again
+              if (file) setLockedFile(file)
+            }}
+          />
         </div>
 
         {needed.length > 0 ? (
@@ -423,8 +429,9 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
               </button>
             </div>
             <p className="muted">
-              Held in memory only. Save puts a picture in a folder you choose; it is not added to Pixora. The rest
-              leave no trace.
+              Held in memory only. Save puts a picture in a folder you choose; it is not added to Pixora. Save locked
+              does the same, but encrypts it so only Pixora can open it, with a key you are shown once. The rest leave
+              no trace.
             </p>
             {heldError && <p className="form-error">{heldError}</p>}
             <div className="held-grid">
@@ -448,6 +455,7 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
                       >
                         Save…
                       </button>
+                      <button onClick={() => void saveLocked(j.id, h.index)}>Save locked…</button>
                       <button onClick={() => void afterHeld(api.discardHeld(j.id, h.index))}>Discard</button>
                     </figcaption>
                   </figure>
@@ -461,6 +469,8 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
             <img src={zoom} alt="" />
           </div>
         )}
+        {lockedKey && <KeyDialog value={lockedKey} onDone={() => setLockedKey(null)} />}
+        {lockedFile && <OpenLocked file={lockedFile} onClose={() => setLockedFile(null)} />}
         {job?.state === 'done' && !job.incognito && (
           <section>
             <h3>Saved to your library</h3>
