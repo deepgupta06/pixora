@@ -10,10 +10,11 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 import numpy as np
+from PIL import Image
 from pydantic import BaseModel
 
 from . import __version__, appearance, identity, locked, model_store, trash
@@ -292,6 +293,15 @@ class StudioJobRequest(BaseModel):
     incognito: bool | None = None
     # For a picture of a known person: the body to give them, a key of the builds in the status.
     build: str | None = None
+
+
+class HeldRef(BaseModel):
+    job_id: int
+    index: int
+
+
+class LockRequest(BaseModel):
+    pictures: list[HeldRef]
 
 
 class OpenLocked(BaseModel):
@@ -1350,10 +1360,16 @@ def create_app(
             raise HTTPException(e.status, str(e))
 
     @app.get("/api/studio/jobs/{job_id}/held/{index}")
-    def studio_held(job_id: int, index: int) -> Response:
+    def studio_held(job_id: int, index: int, size: int | None = Query(None, ge=32, le=2048)) -> Response:
+        """A held picture, or with `size` a small version of it that fits that many pixels."""
         image = studio_call(lambda: studio.private_image(job_id, index))
         out = io.BytesIO()
-        image.convert("RGB").save(out, "JPEG", quality=95, subsampling=0)
+        if size is None:
+            image.convert("RGB").save(out, "JPEG", quality=95, subsampling=0)
+        else:
+            small = image.convert("RGB")  # a copy: the held picture itself is not touched
+            small.thumbnail((size, size))
+            small.save(out, "JPEG", quality=85)
         return Response(out.getvalue(), media_type="image/jpeg", headers=unsaved)
 
     @app.post("/api/studio/jobs/{job_id}/held/{index}/save")
@@ -1370,27 +1386,42 @@ def create_app(
         studio_call(lambda: studio.discard(job_id))
         return {"discarded": True}
 
-    # Locked pictures: an incognito picture, encrypted. Nothing here may reach the disk, the
-    # library, the scanner or the log, so none of it goes through `Studio.keep` or `save`.
+    # Locked pictures: incognito pictures, encrypted together under one key. Nothing here may
+    # reach the disk, the library, the scanner or the log, so none of it goes through
+    # `Studio.keep` or `save`.
     kept_nowhere = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
 
-    @app.post("/api/studio/jobs/{job_id}/held/{index}/lock")
-    def studio_lock(job_id: int, index: int) -> JSONResponse:
-        """A held picture as the bytes of a locked file, with the key that opens it.
+    def locked_error(e: locked.LockedError) -> HTTPException:
+        return HTTPException(e.status, str(e), headers=kept_nowhere)
 
-        The key is made here, returned once and kept nowhere. The picture is not discarded:
+    def thumbnail_of(png: bytes) -> str:
+        """A small JPEG of a picture, as base64, for a strip of thumbnails."""
+        with Image.open(io.BytesIO(png)) as image:
+            small = image.convert("RGB")
+        small.thumbnail((256, 256))
+        out = io.BytesIO()
+        small.save(out, "JPEG", quality=85)
+        return base64.b64encode(out.getvalue()).decode("ascii")
+
+    @app.post("/api/studio/locked/lock")
+    def studio_lock(body: LockRequest) -> JSONResponse:
+        """Held pictures as the bytes of one locked file, with the key that opens it.
+
+        The key is made here, returned once and kept nowhere. The pictures are not discarded:
         the caller does that once the file has been written somewhere.
         """
-        image, settings = studio_call(lambda: studio.held_picture(job_id, index))
+        wanted = list(dict.fromkeys((r.job_id, r.index) for r in body.pictures))  # each once, in order
+        images = [studio_call(lambda j=job_id, i=index: studio.private_image(j, i)) for job_id, index in wanted]
         key = locked.new_key()
         try:
-            data = locked.seal(image, settings, key)
+            data = locked.seal(images, key)
         except locked.LockedError as e:
-            raise HTTPException(e.status, str(e)) from None
+            raise locked_error(e) from None
         return JSONResponse(
             {
                 "key": locked.format_key(key),
                 "name": locked.random_name(),
+                "count": len(images),
                 "data": base64.b64encode(data).decode("ascii"),
             },
             headers=kept_nowhere,
@@ -1398,16 +1429,21 @@ def create_app(
 
     @app.post("/api/studio/locked/open")
     def studio_open_locked(body: OpenLocked) -> JSONResponse:
-        """The picture in a locked file, decrypted in memory and sent so the browser keeps no copy."""
+        """The pictures in a locked file, decrypted in memory and sent so the browser keeps no copy."""
         try:
             key = locked.parse_key(body.key)
-            png, settings = locked.unseal(base64.b64decode(body.data, validate=True), key)
+            pictures = locked.unseal(base64.b64decode(body.data, validate=True), key)
         except locked.LockedError as e:
-            raise HTTPException(e.status, str(e)) from None
+            raise locked_error(e) from None
         except ValueError:  # the file did not arrive as base64
-            raise HTTPException(400, locked.WRONG) from None
+            raise HTTPException(400, locked.WRONG, headers=kept_nowhere) from None
+        try:
+            thumbs = [thumbnail_of(png) for png in pictures]
+        except OSError:  # not a picture after all
+            raise HTTPException(400, locked.WRONG, headers=kept_nowhere) from None
         return JSONResponse(
-            {"image": base64.b64encode(png).decode("ascii"), "settings": settings}, headers=kept_nowhere
+            {"images": [base64.b64encode(png).decode("ascii") for png in pictures], "thumbs": thumbs},
+            headers=kept_nowhere,
         )
 
     @app.get("/api/studio/history")
