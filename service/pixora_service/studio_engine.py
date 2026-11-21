@@ -17,6 +17,7 @@ import onnxruntime as ort
 import torch
 from PIL import Image
 
+from . import appearance
 from . import faces as face_engines
 from . import identity, media, model_store
 from .studio import DEFAULT_STEPS, Progress, StudioError, Style
@@ -52,7 +53,8 @@ IDENTITY_EYE_DISTANCE = 0.085
 # Lower than for ordinary pictures: with a face to follow, more than this burns the colours.
 IDENTITY_GUIDANCE = 3.5
 # What following a face tends to bring with it, named so the model steers away from it.
-IDENTITY_NEGATIVE = "stock photo watermark, logo, caption, signature, monochrome"
+# A picture of a real person is also not an occasion for nudity.
+IDENTITY_NEGATIVE = "stock photo watermark, logo, caption, signature, monochrome, nsfw, nudity, cleavage"
 
 _MATTE_SIDE = 1024
 _TILE, _TILE_PAD = 512, 16
@@ -86,6 +88,7 @@ class TorchEngine:
         self._faces: face_engines.InsightFaceEngine | None = None
         self._identity: ort.InferenceSession | None = None
         self._attributes: ort.InferenceSession | None = None
+        self._scene = None  # the scene model, for hair colour; False once found missing
         self._expander = None
         self._ip_processors: dict | None = None
 
@@ -163,7 +166,7 @@ class TorchEngine:
         self._parts.clear()
         self._ip_processors = None
         self._upscaler = self._restorer = None
-        self._matte = self._identity = self._faces = self._attributes = self._expander = None
+        self._matte = self._identity = self._faces = self._attributes = self._expander = self._scene = None
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -236,11 +239,12 @@ class TorchEngine:
     @staticmethod
     def _set_back(
         out: np.ndarray, fixed: Image.Image, x: int, y: int, side: int, head: tuple[float, float, float] | None = None
-    ) -> None:
+    ) -> np.ndarray:
         """Put a repainted square back, fading in from its edge so no seam shows.
 
         With `head` (centre x, centre y, face size, in the square) only the head is
         taken, so a background that came out a different shade does not show as a patch.
+        Returns how much of each pixel of the square is the new paint, 0 to 1.
         """
         new = np.asarray(fixed.convert("RGB").resize((side, side), Image.Resampling.LANCZOS), dtype=np.float32)
         margin = max(2, side // 8)
@@ -254,8 +258,9 @@ class TorchEngine:
             centre, axes = (round(cx), round(cy - size * 0.3)), (round(size * 1.6), round(size * 2.0))
             cv2.ellipse(oval, centre, axes, 0, 0, 360, 1.0, -1)
             alpha *= cv2.GaussianBlur(oval, (0, 0), max(1.0, size * 0.3))
-        alpha = alpha[:, :, None]
-        out[y : y + side, x : x + side] = out[y : y + side, x : x + side] * (1 - alpha) + new * alpha
+        blend = alpha[:, :, None]
+        out[y : y + side, x : x + side] = out[y : y + side, x : x + side] * (1 - blend) + new * blend
+        return alpha
 
     def _with_style(self, pipe, style: Style | None, extras: tuple[tuple[str, float], ...] = ()):
         """Load the look's LoRA, and any others, for one run. Returns what to call afterwards."""
@@ -404,6 +409,27 @@ class TorchEngine:
             torch.cuda.empty_cache()
         return Image.fromarray(out)
 
+    def _figure(self, rgb: np.ndarray, face: np.ndarray, progress: Progress) -> np.ndarray | None:
+        """Where the person is in a picture, 0 to 1, or None when that cannot be told.
+
+        Needs the background model. The person is the shape the face is part of.
+        """
+        if not (self._dir("birefnet") / "onnx" / "model.onnx").is_file():
+            return None
+        self._on_gpu()  # the graphics card goes to the background model for a moment
+        try:
+            alpha = np.asarray(self.matte(Image.fromarray(rgb), progress), dtype=np.float32) / 255.0
+        except Exception:
+            log.warning("Could not find the person in the picture; their skin is matched without it", exc_info=True)
+            return None
+        h, w = alpha.shape
+        _, labels = cv2.connectedComponents((alpha > 0.5).astype(np.uint8))
+        x, y = (int(round(v)) for v in face.mean(axis=0))
+        label = labels[min(max(y, 0), h - 1), min(max(x, 0), w - 1)]
+        if label == 0:
+            return None
+        return cv2.GaussianBlur((labels == label).astype(np.float32), (0, 0), 3.0)
+
     def _face_engine(self) -> face_engines.InsightFaceEngine | None:
         if self._faces is None:
             try:
@@ -520,10 +546,12 @@ class TorchEngine:
     def generate(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
         references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
-        extras: tuple[tuple[str, float], ...] = (),
+        extras: tuple[tuple[str, float], ...] = (), build: str | None = None,
     ) -> Image.Image:
         if references:
-            return self._person(prompt, negative, width, height, seed, style, references, progress, steps, extras)
+            return self._person(
+                prompt, negative, width, height, seed, style, references, progress, steps, extras, build
+            )
         from diffusers import StableDiffusionXLPipeline
 
         progress.report(0.0, "Loading the image model")
@@ -560,6 +588,27 @@ class TorchEngine:
         out = self._attributes.run(None, {self._attributes.get_inputs()[0].name: blob})[0][0]
         return bool(out[1] > out[0]), float(out[2]) * 100
 
+    def _siglip(self):
+        """The scene model on the processor, or None when it is not installed."""
+        if self._scene is None:
+            from . import scenes
+
+            try:
+                self._scene = scenes.SigLIP2Engine(self.models_dir, _CPU)
+            except face_engines.ModelsMissing:
+                self._scene = False
+        return self._scene or None
+
+    def _hair(self, heads: list[Image.Image]) -> str | None:
+        scene = self._siglip()
+        if scene is None or not heads:
+            return None
+        try:
+            return appearance.hair_words(scene.logits(heads, appearance.HAIR_PROMPTS))
+        except Exception:
+            log.warning("Could not tell the hair colour", exc_info=True)
+            return None
+
     @staticmethod
     def _in_words(looks: list[tuple[bool, float]]) -> str:
         """'a 25 year old man': without it the scene is composed around a stranger of any kind."""
@@ -573,9 +622,11 @@ class TorchEngine:
             return "a teenage boy" if male else "a teenage girl"
         return f"a {max(20, round(age / 5) * 5)} year old {'man' if male else 'woman'}"
 
-    def _identity_embedding(self, references: list[identity.Reference], progress: Progress) -> tuple[np.ndarray, str]:
+    def _identity_embedding(
+        self, references: list[identity.Reference], progress: Progress
+    ) -> tuple[np.ndarray, appearance.Look]:
         """What InstantID needs to know about a face, averaged over the reference photos,
-        and the person in a few words."""
+        and how the person looks, in words."""
         engine = self._face_engine()
         if engine is None:
             raise StudioError("The face models are not installed")
@@ -583,7 +634,7 @@ class TorchEngine:
             self._identity = ort.InferenceSession(
                 str(self._dir("antelopev2") / "glintr100.onnx"), providers=_CPU
             )
-        session, found, looks = self._identity, [], []
+        session, found, looks, heads = self._identity, [], [], []
         for n, ref in enumerate(references):
             progress.report(n / len(references), "Studying the reference photos")
             if ref.path is None:
@@ -616,13 +667,20 @@ class TorchEngine:
             look = self._gender_age(full, (x1, y1, x2, y2))
             if look is not None:
                 looks.append(look)
+            # The head with its hair, for telling the hair colour.
+            half = max(x2 - x1, y2 - y1) / 2 + (x2 - x1) * 0.45
+            hx, hy = (x1 + x2) / 2, (y1 + y2) / 2
+            head = full[int(max(0, hy - half)) : int(min(h, hy + half)), int(max(0, hx - half)) : int(min(w, hx + half))]
+            if head.size:
+                heads.append(Image.fromarray(np.ascontiguousarray(head[:, :, ::-1])))
         if not found:
             raise StudioError("None of this person's photos could be read to learn their face")
         stack = np.stack(found)
         norms = np.linalg.norm(stack, axis=1, keepdims=True)
         mean = (stack / norms).mean(axis=0)
         # The model was trained on raw embeddings, so give the average a typical length.
-        return (mean / np.linalg.norm(mean) * float(norms.mean())).astype(np.float32), self._in_words(looks)
+        embedding = (mean / np.linalg.norm(mean) * float(norms.mean())).astype(np.float32)
+        return embedding, appearance.Look(person=self._in_words(looks), hair=self._hair(heads))
 
     @staticmethod
     def _face_placement(width: int, height: int) -> np.ndarray:
@@ -652,20 +710,23 @@ class TorchEngine:
     def _person(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
         references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
-        extras: tuple[tuple[str, float], ...] = (),
+        extras: tuple[tuple[str, float], ...] = (), build: str | None = None,
     ) -> Image.Image:
         """A picture of a known person.
 
         The scene is painted from the words alone, so the pose and composition are
-        whatever suits it. Then the main face is painted again, enlarged, as the person.
+        whatever suits it. Then the main face is painted again, enlarged, as the person,
+        and the person's skin outside that face is brought to the face's tone.
         """
         from diffusers import StableDiffusionXLPipeline
 
         from .vendor.instantid_pipeline import draw_kps
 
-        embedding, who = self._identity_embedding(references, progress.part(0.0, 0.05))
-        # A scene with the person seen from behind leaves no face to make theirs.
-        prompt = prompt.replace(identity.PERSON, who, 1) + ", face clearly visible"
+        embedding, look = self._identity_embedding(references, progress.part(0.0, 0.05))
+        # The scene is painted around the person as described, so the body, skin and hair it
+        # comes with are as close to theirs as words allow. Without a face in view there is
+        # none to make theirs, so one is asked for.
+        prompt = prompt.replace(identity.PERSON, look.words(prompt, build), 1) + ", face clearly visible"
         negative = ", ".join(x for x in (IDENTITY_NEGATIVE, negative) if x)
         progress.report(0.05, "Loading the image model")
         self._plain_attention()
@@ -707,7 +768,12 @@ class TorchEngine:
             )
             out = rgb.astype(np.float32)
             cx, cy = main.mean(axis=0)
-            self._set_back(out, fixed, x, y, side, head=(cx - x, cy - y, size))
+            painted = np.zeros(rgb.shape[:2], dtype=np.float32)
+            painted[y : y + side, x : x + side] = self._set_back(out, fixed, x, y, side, head=(cx - x, cy - y, size))
+            # The face now has the person's skin tone; the neck, arms and hands still have
+            # whatever the scene gave its invented person.
+            figure = self._figure(rgb, main, progress.part(0.98, 1.0))
+            out = appearance.match_skin(rgb.astype(np.float32), out, main, painted, figure)
             return Image.fromarray(out.round().clip(0, 255).astype(np.uint8))
         finally:
             undo()

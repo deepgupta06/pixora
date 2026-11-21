@@ -28,7 +28,7 @@ from typing import Callable, Protocol
 import numpy as np
 from PIL import Image, PngImagePlugin
 
-from . import compose, identity, media, model_store
+from . import appearance, compose, identity, media, model_store
 from .config import Config
 from .db import Database
 from .scanner import ScanManager
@@ -229,11 +229,12 @@ class StudioEngine(Protocol):
     def generate(
         self, prompt: str, negative: str, width: int, height: int, seed: int, style: Style | None,
         references: list[identity.Reference], progress: Progress, steps: int = DEFAULT_STEPS,
-        extras: tuple[tuple[str, float], ...] = (),
+        extras: tuple[tuple[str, float], ...] = (), build: str | None = None,
     ) -> Image.Image:
         """A new picture. With `references`, it shows the person in them.
 
-        `extras` are further LoRAs to use, as (model id, weight).
+        `extras` are further LoRAs to use, as (model id, weight). `build` is the body the
+        user asked for the person (a key of `appearance.BUILDS`).
         """
         ...
 
@@ -559,6 +560,11 @@ class Studio:
             p["expand"] = p.get("expand") is not False
             style = self._style(p, restyle=False)
             person_id = p.get("person_id")
+            build = p.pop("build", None) or None
+            if build is not None and build not in appearance.BUILDS:
+                raise StudioError("Unknown build")
+            if build is not None and person_id is not None:
+                p["build"] = build  # a face does not show the body, so the user says
             if person_id is not None:
                 row = self.db.conn().execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
                 if row is None:
@@ -698,7 +704,7 @@ class Studio:
             ]
             return engine.generate(
                 prompt, negative, width, height, seed, style, references, progress, steps=steps,
-                extras=tuple((m, w) for m, w in extras if w and self._has(m)),
+                extras=tuple((m, w) for m, w in extras if w and self._has(m)), build=p.get("build"),
             )
 
         assert source is not None

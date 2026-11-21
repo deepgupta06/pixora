@@ -124,6 +124,11 @@ class SigLIP2Engine:
         probs = 1 / (1 + np.exp(-out["logits_per_image"]))
         return _unit(out["image_embeds"]).astype(np.float32), probs
 
+    def logits(self, images: list[Image.Image], texts: list[str]) -> np.ndarray:
+        """Raw image-to-text scores: one row per image, one column per text."""
+        out = self._run(self._tokenize(texts), np.stack([_pixels(img) for img in images]))
+        return out["logits_per_image"]
+
     def embed_text(self, text: str) -> np.ndarray:
         out = self._run(self._tokenize([text]), self._blank)
         return _unit(out["text_embeds"])[0].astype(np.float32)

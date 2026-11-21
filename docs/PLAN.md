@@ -34,6 +34,18 @@ originals are never modified.
   is used, several matches are put to the user, and an unknown name is reported.
   The person's clearest confirmed faces are the references. Pictures Pixora
   made are never used as references.
+- A picture of a known person is made to hold together. The scene is composed
+  from words, so its neck, hands and hair would belong to an invented stranger
+  once the face is painted again as the person. Three things close the gap:
+  the words give the person's age, sex and hair colour (read from their photos
+  on this computer); the skin outside the repainted face is moved by the same
+  change in tone the face went through, limited to the person's shape found
+  with the background model when it is installed; and the user can choose a
+  build (slim to larger, in plain words), because no photo of a face shows the body. The
+  person's own skin tone is deliberately not put into words: it reads as pale
+  in one photo and dark in the next with the flash and white balance, and a
+  wrong word would make the picture someone else. Pictures of a real person
+  are asked to leave out nudity and cleavage.
 - A picture Pixora made can be deleted from the viewer, after a confirmation.
   Its file goes to the Recycle Bin, and its previews, face crops and every
   library record of it are removed. Edits made from it are kept without a

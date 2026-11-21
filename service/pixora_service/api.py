@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 import numpy as np
 from pydantic import BaseModel
 
-from . import __version__, identity, model_store, trash
+from . import __version__, appearance, identity, model_store, trash
 from .config import THUMB_SIZES, Config
 from .db import Database
 from .faces import ModelsMissing
@@ -289,6 +289,8 @@ class StudioJobRequest(BaseModel):
     models: list[str] | None = None
     # New pictures only: write nothing anywhere; hold the results in memory until saved or discarded.
     incognito: bool | None = None
+    # For a picture of a known person: the body to give them, a key of the builds in the status.
+    build: str | None = None
 
 
 class HeldPicture(BaseModel):
@@ -319,6 +321,11 @@ class StudioModel(BaseModel):
     installed: bool
 
 
+class StudioBuild(BaseModel):
+    id: str
+    label: str
+
+
 class StudioStyle(BaseModel):
     id: str
     label: str
@@ -346,6 +353,7 @@ class StudioStatus(BaseModel):
     min_steps: int
     max_steps: int
     helpers: list[str]
+    builds: list[StudioBuild]
     creations_dir: str
 
 
@@ -1281,6 +1289,7 @@ def create_app(
             sizes=[StudioSize(id=k, label=label, width=w, height=h) for k, (label, w, h) in SIZES.items()],
             max_count=MAX_COUNT, default_steps=DEFAULT_STEPS, min_steps=MIN_STEPS, max_steps=MAX_STEPS,
             helpers=list(model_store.HELPERS),
+            builds=[StudioBuild(id=k, label=label) for k, (label, _) in appearance.BUILDS.items()],
             creations_dir=str(config.creations_dir),
         )
 

@@ -93,6 +93,8 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
   const [lighting, setLighting] = useState(false)
   const [mentions, setMentions] = useState<PromptMention[]>([])
   const [who, setWho] = useState<Who>(null)
+  // The body to give a known person, since a face does not show it. Empty: not specified.
+  const [build, setBuild] = useState('')
   const [history, setHistory] = useState<Creation[]>([])
 
   const loadHistory = useCallback(() => {
@@ -166,6 +168,7 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
     setDetail(c.params.detail ?? 1)
     setLighting(c.params.lighting ?? false)
     setWho(c.params.person_id ?? null)
+    setBuild(c.params.build ?? '')
     setCount(1)
   }, [])
   useEffect(() => {
@@ -230,6 +233,7 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
       lighting,
       seed: seed.trim() ? Number(seed) : undefined,
       person_id: personId,
+      build: personId !== undefined && build ? build : undefined,
       incognito: incognito || undefined,
     })
 
@@ -269,6 +273,25 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
                 Pixora studies a few of the clearest photos of {person.name} on this computer. Nothing is sent
                 anywhere.
               </p>
+            )}
+            {person && (
+              <div className="field">
+                <span>Body (optional)</span>
+                <div className="chips">
+                  <button aria-pressed={build === ''} onClick={() => setBuild('')}>
+                    Not specified
+                  </button>
+                  {status.builds.map((b) => (
+                    <button key={b.id} aria-pressed={build === b.id} onClick={() => setBuild(b.id)}>
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="muted">
+                  A face does not show the body, so Pixora draws one from the words. Choose a build if it should
+                  match {person.name}.
+                </p>
+              </div>
             )}
           </section>
         )}
