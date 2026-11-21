@@ -369,6 +369,14 @@ class Studio:
     def private_image(self, job_id: int, index: int) -> Image.Image:
         return self._private(job_id, index)[1]
 
+    def held_picture(self, job_id: int, index: int) -> tuple[Image.Image, dict]:
+        """An incognito picture with the settings it was made with, for locking it.
+
+        Nothing is written, saved or discarded here.
+        """
+        _, image, settings = self._private(job_id, index)
+        return image, dict(settings)
+
     def keep(self, job_id: int, index: int) -> int:
         """Save an incognito picture: from here on it is an ordinary library picture."""
         with self._lock:
@@ -449,11 +457,13 @@ class Studio:
 
     def _run(self, job: Job) -> None:
         job.state, job.message = "running", "Starting"
-        # The image libraries warn about a long prompt by printing part of it.
-        loud = [logging.getLogger(name) for name in ("diffusers", "transformers")] if job.incognito else []
-        levels = [logger.level for logger in loud]
-        for logger in loud:
-            logger.setLevel(logging.ERROR)
+        # The image libraries warn about a long description by printing the part they cut off.
+        # They set their own log levels when they are first imported, which can be after this
+        # point, so setting theirs does not hold. Turning warnings off everywhere for the length
+        # of the job does.
+        was = logging.root.manager.disable
+        if job.incognito:
+            logging.disable(logging.WARNING)
         self.scanner.hold(True)
         if job.operation != "download":
             # The scan's own models would otherwise sit in graphics memory the job needs.
@@ -494,8 +504,7 @@ class Studio:
                 except Exception:
                     log.exception("Could not free the graphics card after job %s", job.id)
             self.scanner.hold(False)
-            for logger, level in zip(loud, levels):
-                logger.setLevel(level)
+            logging.disable(was)
         if job.incognito:
             if job.state != "done" or job.cancel.is_set():
                 job.private[:] = [None] * len(job.private)

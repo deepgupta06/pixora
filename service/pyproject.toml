@@ -33,6 +33,7 @@ studio = [
     "peft>=0.13",
     "spandrel>=0.4",
     "huggingface_hub>=0.25",
+    "cryptography>=43",  # locked pictures: AES-256-GCM
 ]
 
 # Model test scripts in phase0/ (see docs/PHASE0.md).
