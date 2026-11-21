@@ -87,9 +87,14 @@ originals are never modified.
   not before, so cancelling the save window loses nothing.
 - The incognito picture view: in incognito mode the Create screen shows, above
   the form, the incognito pictures one large with Previous and Next (also the
-  arrow keys), their thumbnails below, and for the one shown: Save, Save
-  locked and Discard. Ticking thumbnails and pressing Save locked together puts
-  them in one file under one key. The view can be maximized to fill the window.
+  arrow keys), their thumbnails below, and for the one shown: Save and Discard.
+  Locking is always of the ticked pictures: the ticks are on the thumbnails and
+  in a "Select" box beside the picture shown, "Select all" is at the top, and
+  "Lock selected" puts the ticked pictures in one file under one key (one
+  picture alone is locked by ticking it). There is no lock button for a single
+  picture, so a lock is not made one key per picture by accident. The picture
+  is kept small enough that the thumbnails and these buttons are on the first
+  screen at the app's window size. The view can be maximized to fill the window.
   The list of earlier pictures is not shown in incognito mode. Pictures held by
   the service are shown from it with "do not store"; thumbnails are small
   versions made on request. The view also appears while pictures are held, even

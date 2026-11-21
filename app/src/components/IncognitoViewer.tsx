@@ -110,6 +110,13 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
 
   const go = (step: number) => setCurrent((c) => (Math.min(c, n - 1) + step + n) % n)
 
+  const tick = (r: Held, on: boolean) => {
+    const next = new Set(picked)
+    if (on) next.add(heldKey(r))
+    else next.delete(heldKey(r))
+    setPicked(next)
+  }
+
   const forgetOpened = (id?: string) => {
     const gone = opened.filter((o) => id === undefined || o.id === id)
     gone.forEach(forget)
@@ -139,7 +146,26 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
     <section className={`inc ${maximized ? 'maximized' : ''}`} aria-label="Incognito pictures">
       <div className="row inc-head">
         <h3>Incognito pictures{n > 0 ? ` (${n})` : ''}</h3>
-        <div className="row">
+        <div className="row inc-tools">
+          {held.length > 0 && (
+            <>
+              <button onClick={() => setPicked(chosen.length === held.length ? new Set() : new Set(held.map(heldKey)))}>
+                {chosen.length === held.length ? 'Select none' : 'Select all'}
+              </button>
+              <button
+                className="primary"
+                disabled={chosen.length === 0}
+                onClick={() => onLock(chosen)}
+                title={
+                  chosen.length === 0
+                    ? 'Tick the pictures to lock together first'
+                    : 'Lock the ticked pictures together in one file, under one key'
+                }
+              >
+                Lock selected{chosen.length > 0 ? ` (${chosen.length})` : ''}…
+              </button>
+            </>
+          )}
           <button onClick={() => picker.current?.click()}>Open locked pictures…</button>
           {opened.length > 0 && <button onClick={() => forgetOpened()}>Close locked pictures</button>}
           <button onClick={() => setMaximized(!maximized)} aria-pressed={maximized}>
@@ -185,11 +211,19 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
         <div className="row inc-actions">
           {item.held ? (
             <>
+              <label className="check inc-pick">
+                <input
+                  type="checkbox"
+                  checked={picked.has(heldKey(item.held))}
+                  onChange={(e) => tick(item.held!, e.target.checked)}
+                />
+                Select
+              </label>
               <button className="primary" onClick={() => onSave(item.held!)}>
                 Save…
               </button>
-              <button onClick={() => onLock([item.held!])}>Save locked…</button>
               <button onClick={() => onDiscard([item.held!])}>Discard</button>
+              {held.length > 1 && <button onClick={() => onDiscard(held)}>Discard all</button>}
             </>
           ) : (
             <>
@@ -202,6 +236,9 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
         </div>
       )}
 
+      {held.length > 1 && (
+        <p className="muted inc-hint">Tick the pictures to lock together, then press Lock selected: one key opens them all.</p>
+      )}
       {n > 0 && (
         <div className="inc-strip" role="list" {...frozen}>
           {items.map((it, i) => (
@@ -212,12 +249,7 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
                     type="checkbox"
                     checked={picked.has(heldKey(it.held))}
                     aria-label="Lock this picture with the others ticked"
-                    onChange={(e) => {
-                      const next = new Set(picked)
-                      if (e.target.checked) next.add(heldKey(it.held!))
-                      else next.delete(heldKey(it.held!))
-                      setPicked(next)
-                    }}
+                    onChange={(e) => tick(it.held!, e.target.checked)}
                   />
                 </label>
               )}
@@ -239,21 +271,10 @@ export function IncognitoViewer({ incognito, held, error, onSave, onLock, onDisc
         </div>
       )}
 
-      {held.length > 0 && (
-        <div className="row inc-select">
-          <button onClick={() => setPicked(chosen.length === held.length ? new Set() : new Set(held.map(heldKey)))}>
-            {chosen.length === held.length ? 'Select none' : 'Select all'}
-          </button>
-          <button className="primary" disabled={chosen.length === 0} onClick={() => onLock(chosen)}>
-            Save locked together{chosen.length > 0 ? ` (${chosen.length})` : ''}…
-          </button>
-          <button onClick={() => onDiscard(held)}>Discard all</button>
-        </div>
-      )}
       <p className="muted">
-        Held in memory only. Save puts a picture in a folder you choose; it is not added to Pixora. Tick pictures and
-        Save locked together puts them in one encrypted file with one key, shown once, that only Pixora can open.
-        Pictures opened from a locked file are forgotten when you leave this screen.
+        Held in memory only. Save puts a picture in a folder you choose; it is not added to Pixora. Lock selected puts
+        the ticked pictures in one encrypted file under one key, shown once, that only Pixora can open. Pictures opened
+        from a locked file are forgotten when you leave this screen.
       </p>
       {(error || note) && <p className="form-error">{error ?? note}</p>}
     </section>

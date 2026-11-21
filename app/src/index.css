@@ -954,8 +954,13 @@ button[aria-selected='true'] {
 .inc-head {
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
+  flex-wrap: wrap;
   margin-bottom: 8px;
+}
+.inc-tools {
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .inc-stage {
   position: relative;
@@ -971,7 +976,7 @@ button[aria-selected='true'] {
 .inc-stage > img {
   display: block;
   width: 100%;
-  max-height: 72vh;
+  max-height: min(50vh, 480px);
   object-fit: contain;
   -webkit-user-drag: none;
 }
@@ -1013,9 +1018,16 @@ button[aria-selected='true'] {
   background: rgb(0 0 0 / 0.55);
 }
 .inc-actions {
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   margin: 10px 0;
+}
+.inc-pick {
+  margin: 0 4px 0 0;
+}
+.inc-hint {
+  margin: 0 0 6px;
 }
 .inc-strip {
   display: flex;
@@ -1072,16 +1084,17 @@ button[aria-selected='true'] {
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgb(255 255 255 / 0.55);
   border-radius: 6px;
-  background: rgb(0 0 0 / 0.55);
+  background: rgb(0 0 0 / 0.7);
   cursor: pointer;
 }
 .held-pick input {
   margin: 0;
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
 }
 
 .edit section {

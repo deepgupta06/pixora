@@ -145,6 +145,7 @@ export function UnlockDialog({
         }}
       >
         <p className="muted">{file.name}</p>
+        <p className="muted">One key opens every picture in this file.</p>
         <label className="field">
           <span>Key</span>
           <input
