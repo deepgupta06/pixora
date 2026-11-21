@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { base64ToBlob, fileToBase64 } from '../saveFile'
+import { base64ToBlob, fileToBase64, saveBlob, type SaveOptions, type SaveResult } from '../saveFile'
 
 /**
  * The key to a locked file, shown once. Pixora keeps no copy of it anywhere, so a key that
@@ -166,6 +166,168 @@ export function UnlockDialog({
           </button>
         </div>
       </form>
+    </dialog>
+  )
+}
+
+/**
+ * Asks for the key of a locked file that pictures are to be added to. `onAdd` makes the new
+ * file and the caller puts it somewhere; the key is kept only while it is being typed.
+ */
+export function AddDialog({
+  file,
+  count,
+  onClose,
+  onAdd,
+}: {
+  file: File
+  count: number
+  onClose: () => void
+  /** Refuses, with a message to show, for a wrong key or a damaged file. */
+  onAdd: (key: string) => Promise<void>
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const dialog = ref.current
+    if (dialog && !dialog.open) dialog.showModal()
+  }, [])
+
+  // Closed here, not left to the dialog's own close event, which the browser may hold back.
+  const finish = () => {
+    ref.current?.close()
+    onClose()
+  }
+
+  const add = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await onAdd(key)
+      setKey('') // not kept a moment longer than it was needed
+      finish()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That did not work')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <dialog
+      ref={ref}
+      className="dialog lock-dialog"
+      aria-label="Add to a locked file"
+      // Once the file is being made it goes on to be saved, so the dialog stays until that is handed over.
+      onCancel={(e) => {
+        if (busy) e.preventDefault()
+      }}
+      onClose={onClose}
+    >
+      <header>
+        <h2>Add to a locked file</h2>
+        <button onClick={finish} disabled={busy} aria-label="Close">
+          ✕
+        </button>
+      </header>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (key.trim() && !busy) void add()
+        }}
+      >
+        <p className="muted">{file.name}</p>
+        <p className="muted">
+          {count === 1 ? 'The picture you ticked goes' : `The ${count} pictures you ticked go`} into this file under its
+          own key, so one key opens everything in it. No new key is made.
+        </p>
+        <label className="field">
+          <span>Key of this file</span>
+          <input
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="ABCD-EFGH-IJKL-MNOP-…"
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            autoFocus
+            className="lock-key-input"
+          />
+        </label>
+        {error && <p className="form-error">{error}</p>}
+        <p className="muted">
+          A Save window follows. Save over this file to keep one file, or give it a new name to keep this one as it is.
+        </p>
+        <div className="row lock-actions">
+          <button type="submit" className="primary" disabled={busy || !key.trim()}>
+            {busy ? 'Adding…' : count === 1 ? 'Add the picture' : `Add ${count} pictures`}
+          </button>
+        </div>
+      </form>
+    </dialog>
+  )
+}
+
+/**
+ * The browser opens its save window only for a click it saw a moment ago, and making a file can
+ * take longer than that. This asks for a click, so a file that has been made is not lost for want
+ * of one.
+ */
+export function SaveReadyDialog({
+  blob,
+  options,
+  onDone,
+}: {
+  blob: Blob
+  options: SaveOptions
+  onDone: (result: Exclude<SaveResult, 'needs-click'>) => void
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const dialog = ref.current
+    if (dialog && !dialog.open) dialog.showModal()
+  }, [])
+
+  const save = async () => {
+    setError(null)
+    try {
+      // Called straight from the click, so the browser lets its save window open.
+      const result = await saveBlob(blob, options, true)
+      if (result === 'written' || result === 'handed-over') onDone(result)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The file could not be saved')
+    }
+  }
+
+  return (
+    <dialog
+      ref={ref}
+      className="dialog lock-dialog"
+      aria-label="Save the file"
+      onCancel={(e) => {
+        e.preventDefault()
+        onDone('cancelled')
+      }}
+    >
+      <header>
+        <h2>Your file is ready</h2>
+      </header>
+      <p>
+        It took a moment to make, so your browser wants a fresh click before it opens its Save window. If you cancel
+        now, nothing is saved and the pictures stay held.
+      </p>
+      {error && <p className="form-error">{error}</p>}
+      <div className="row lock-actions">
+        <button onClick={() => onDone('cancelled')}>Cancel</button>
+        <button className="primary" onClick={() => void save()}>
+          Choose where to save…
+        </button>
+      </div>
     </dialog>
   )
 }

@@ -23,10 +23,16 @@ So nothing about the pictures can be read without the key, except roughly how bi
 Version 1, the first form of this feature, held one picture and its settings. Those files
 still open; the settings in them are not read.
 
-The key is 256 random bits made for each save. It is handed over once, as base32 in groups
-of four, and kept nowhere: not on disk, not in the database, not in the log. A key that is
-lost cannot be recovered, and neither can the pictures. Because the key is random and
-used for one file, there is no password to stretch, and a nonce can never be reused with it.
+The key is 256 random bits made when a file is first locked. It is handed over once, as
+base32 in groups of four, and kept nowhere: not on disk, not in the database, not in the
+log. A key that is lost cannot be recovered, and neither can the pictures. Because the key
+is random there is no password to stretch.
+
+Pictures can be added to a locked file later. The file is opened with its key, the new
+pictures are put after the old ones, and all of them are encrypted again under the same key,
+with a fresh random nonce. So one key can cover pictures made on different days. A key used
+for a few thousand files at most meets the same 96-bit nonce twice with a chance far below
+one in 10^20, which is why a random nonce each time is enough.
 
 Nothing here touches the disk or the library. Locking and unlocking happen in memory.
 """
@@ -110,21 +116,52 @@ def random_name() -> str:
 # ---- the file ---------------------------------------------------------------------
 
 
-def seal(images: list[Image.Image], key: bytes) -> bytes:
-    """The pictures as the bytes of one locked file."""
-    if not images:
+def _png(image: Image.Image) -> bytes:
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    return out.getvalue()
+
+
+def seal_pngs(pngs: list[bytes], key: bytes) -> bytes:
+    """Pictures, already as PNG, as the bytes of one locked file, with a fresh nonce."""
+    if not pngs:
         raise LockedError("Choose at least one picture to lock")
-    if len(images) > MAX_PICTURES:
+    if len(pngs) > MAX_PICTURES:
         raise LockedError(f"At most {MAX_PICTURES} pictures fit in one locked file")
     cipher = _cipher(key)
-    parts = [struct.pack(">I", len(images))]
-    for image in images:
-        png = io.BytesIO()
-        image.save(png, "PNG")
-        parts += [struct.pack(">I", png.tell()), png.getvalue()]
+    parts = [struct.pack(">I", len(pngs))]
+    for png in pngs:
+        parts += [struct.pack(">I", len(png)), png]
     nonce = secrets.token_bytes(NONCE_BYTES)
     header = MAGIC + bytes([VERSION]) + nonce
     return header + cipher.encrypt(nonce, b"".join(parts), header)
+
+
+def seal(images: list[Image.Image], key: bytes) -> bytes:
+    """The pictures as the bytes of one locked file."""
+    return seal_pngs([_png(image) for image in images], key)
+
+
+def append(data: bytes, key: bytes, images: list[Image.Image]) -> tuple[bytes, int]:
+    """A locked file with pictures added to it, under the same key, and how many it now holds.
+
+    The file is opened first, so a wrong key or a damaged file is refused here and nothing is
+    made. The result is opened again before it is handed back, so a bad one can never replace
+    the file it came from.
+    """
+    if not images:
+        raise LockedError("Choose at least one picture to add")
+    before = unseal(data, key)
+    if len(before) + len(images) > MAX_PICTURES:
+        raise LockedError(
+            f"This file holds {len(before)} pictures and at most {MAX_PICTURES} fit in one. "
+            "Lock these in a new file instead."
+        )
+    added = [_png(image) for image in images]
+    after = seal_pngs(before + added, key)
+    if unseal(after, key) != before + added:
+        raise LockedError("The pictures could not be added safely, so nothing was changed", 500)
+    return after, len(before) + len(added)
 
 
 def unseal(data: bytes, key: bytes) -> list[bytes]:

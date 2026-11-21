@@ -155,6 +155,82 @@ def test_a_file_holds_at_least_one_picture_and_at_most_a_hundred():
         locked.seal([tiny] * (locked.MAX_PICTURES + 1), key)
 
 
+# ---- adding to a file ---------------------------------------------------------------
+
+
+def test_pictures_added_later_open_with_the_same_key_after_the_old_ones():
+    key = locked.new_key()
+    old, new = pictures(2), [picture((9, 9, 9), (30, 30)), picture((90, 90, 90), (20, 40))]
+    data = locked.seal(old, key)
+    more, total = locked.append(data, key, new)
+    assert total == 4
+    # the old pictures as they were, byte for byte, and the new ones after them
+    assert locked.unseal(more, key) == [png_of(i) for i in old + new]
+    # the file that was added to is not changed by it, and added to again it grows again
+    assert locked.unseal(data, key) == [png_of(i) for i in old]
+    again, total = locked.append(more, key, [picture()])
+    assert total == 5 and len(locked.unseal(again, key)) == 5
+
+
+def test_adding_makes_a_new_nonce_and_still_keeps_only_the_pictures():
+    key = locked.new_key()
+    data = locked.seal(pictures(1), key)
+    more, _ = locked.append(data, key, pictures(2))
+    assert more[:7] == data[:7] and more[7:19] != data[7:19]  # the same form, a new nonce
+    expected = [png_of(i) for i in pictures(1) + pictures(2)]
+    assert plaintext_of(more, key) == struct.pack(">I", 3) + b"".join(struct.pack(">I", len(p)) + p for p in expected)
+
+
+def test_adding_with_the_wrong_key_or_to_a_damaged_file_is_refused():
+    key = locked.new_key()
+    data = locked.seal(pictures(2), key)
+    with pytest.raises(locked.LockedError) as e:
+        locked.append(data, locked.new_key(), pictures(1))
+    assert str(e.value) == locked.WRONG
+    for bad in (data[:-1], data + b"x", b"", png_of(picture())):
+        with pytest.raises(locked.LockedError) as e:
+            locked.append(bad, key, pictures(1))
+        assert str(e.value) == locked.WRONG
+
+
+def test_a_file_that_is_full_cannot_be_added_to_and_is_told_to_use_a_new_one():
+    key = locked.new_key()
+    tiny = Image.new("RGB", (2, 2))
+    data = locked.seal([tiny] * (locked.MAX_PICTURES - 1), key)
+    full, total = locked.append(data, key, [tiny])
+    assert total == locked.MAX_PICTURES
+    with pytest.raises(locked.LockedError, match="new file"):
+        locked.append(full, key, [tiny])
+    with pytest.raises(locked.LockedError, match="new file"):
+        locked.append(data, key, [tiny, tiny])
+
+
+def test_adding_nothing_is_refused():
+    key = locked.new_key()
+    with pytest.raises(locked.LockedError, match="at least one"):
+        locked.append(locked.seal(pictures(1), key), key, [])
+
+
+def test_adding_to_a_file_of_the_first_form_makes_it_the_new_form_without_its_settings():
+    png = png_of(picture())
+    settings = json.dumps({"prompt": PROMPT, "seed": 7}).encode()
+    key, old = sealed_by_hand(struct.pack(">I", len(settings)) + settings + png, version=1)
+    data, total = locked.append(old, key, pictures(1))
+    assert total == 2 and data[6] == locked.VERSION
+    assert locked.unseal(data, key) == [png, png_of(pictures(1)[0])]
+    assert PROMPT.encode() not in plaintext_of(data, key)
+
+
+def test_a_result_that_does_not_open_as_it_should_is_never_handed_back(monkeypatch):
+    key = locked.new_key()
+    data = locked.seal(pictures(2), key)
+    real = locked.seal_pngs
+    monkeypatch.setattr(locked, "seal_pngs", lambda pngs, k: real(pngs[:-1], k))  # a picture goes missing
+    with pytest.raises(locked.LockedError) as e:
+        locked.append(data, key, pictures(1))
+    assert e.value.status == 500 and "nothing was changed" in str(e.value)
+
+
 def test_the_key_is_shown_in_groups_and_read_back_in_any_form():
     key = locked.new_key()
     text = locked.format_key(key)
@@ -318,3 +394,118 @@ def test_without_the_encryption_library_locking_says_what_to_install(client, mon
     r = client.post("/api/studio/locked/lock", json=refs((job["id"], 0)))
     assert r.status_code == 503 and "studio" in r.json()["detail"]
     assert client.get(f"/api/studio/jobs/{job['id']}/held/0").status_code == 200  # nothing was lost
+
+
+# ---- adding to a file through the service -------------------------------------------
+
+
+def lock_held(client, job, *indexes):
+    """Some of a job's held pictures locked together: the answer to a lock request."""
+    r = client.post("/api/studio/locked/lock", json=refs(*[(job["id"], i) for i in indexes]))
+    assert r.status_code == 200
+    return r.json()
+
+
+def add_to(client, file, picture_refs, key=None, data=None):
+    body = {"data": data or file["data"], "key": key or file["key"], **picture_refs}
+    return client.post("/api/studio/locked/add", json=body)
+
+
+def opened_from(client, data, key):
+    r = client.post("/api/studio/locked/open", json={"data": data, "key": key})
+    assert r.status_code == 200
+    return r.json()["images"]
+
+
+def test_adding_to_a_locked_file_keeps_its_key_and_leaves_nothing_behind(client, monkeypatch, caplog, capsys):
+    first = held(client, count=2)
+    later = held(client, count=1, prompt="a description for another day")
+    before = library_state(client)
+    scanner = client.app.state.scanner
+    started = []
+    monkeypatch.setattr(scanner, "start", lambda *a, **k: started.append(1))  # no face or scene scan
+    monkeypatch.setattr(Studio, "save", forbid)  # nothing that makes a library photo
+    monkeypatch.setattr(Studio, "keep", forbid)
+    for name in ("NamedTemporaryFile", "SpooledTemporaryFile", "mkstemp", "mkdtemp"):
+        monkeypatch.setattr(tempfile, name, forbid)  # no temporary file, encrypted or not
+    caplog.set_level(logging.DEBUG)
+
+    file = lock_held(client, first, 0, 1)  # made one day, under a key
+    r = add_to(client, file, refs((later["id"], 0)), key=file["key"].lower())  # added to on another day
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-store, no-cache, must-revalidate" and r.headers["pragma"] == "no-cache"
+    body = r.json()
+    assert sorted(body) == ["added", "data", "total"]  # no key comes back: the caller has it
+    assert body["added"] == 1 and body["total"] == 3
+
+    # One key opens all three, and the first two are as they were.
+    now = opened_from(client, body["data"], file["key"])
+    assert len(now) == 3 and now[:2] == opened_from(client, file["data"], file["key"])
+    assert [Image.open(io.BytesIO(base64.b64decode(p))).size for p in now] == [(1024, 1024)] * 3
+
+    # Nothing was stored, the file that was added to is as it was, and the picture added is
+    # still held until the new file has been written.
+    assert library_state(client) == before and started == []
+    assert len(opened_from(client, file["data"], file["key"])) == 2
+    assert client.get(f"/api/studio/jobs/{later['id']}/held/0").status_code == 200
+
+    out, err = capsys.readouterr()
+    for text in (caplog.text, out, err):
+        assert file["key"] not in text and file["key"].replace("-", "") not in text
+        assert PROMPT not in text and "a description for another day" not in text
+
+
+def test_adding_with_a_wrong_key_or_a_damaged_file_says_so_changes_nothing_and_keeps_the_pictures(client):
+    first, later = held(client, count=2), held(client)
+    file = lock_held(client, first, 0, 1)
+    damaged = bytearray(base64.b64decode(file["data"]))
+    damaged[-1] ^= 1
+    want = refs((later["id"], 0))
+
+    for r in (
+        add_to(client, file, want, key=locked.format_key(locked.new_key())),
+        add_to(client, file, want, data=base64.b64encode(bytes(damaged)).decode()),
+        add_to(client, file, want, data="this is not base64!"),
+        add_to(client, file, want, data=base64.b64encode(b"just some other file").decode()),
+    ):
+        assert r.status_code == 400 and r.json() == {"detail": locked.WRONG}
+        assert "no-store" in r.headers["cache-control"] and "data" not in r.json()
+    r = add_to(client, file, want, key="ABCD-EFGH")
+    assert r.status_code == 400 and r.json() == {"detail": locked.NOT_A_KEY}
+    assert client.get(f"/api/studio/jobs/{later['id']}/held/0").status_code == 200  # nothing was lost
+
+
+def test_only_held_pictures_can_be_added_and_nothing_is_added_if_one_is_missing(client):
+    first, later = held(client, count=2), held(client)
+    file = lock_held(client, first, 0)
+    assert add_to(client, file, refs((999, 0))).status_code == 404
+    assert add_to(client, file, refs((later["id"], 0), (later["id"], 7))).status_code == 404
+    client.delete(f"/api/studio/jobs/{later['id']}/held")
+    assert add_to(client, file, refs((later["id"], 0))).status_code == 404
+    r = add_to(client, file, refs())
+    assert r.status_code == 400 and "at least one" in r.json()["detail"]
+
+
+def test_the_same_picture_asked_for_twice_is_added_once(client):
+    first, later = held(client), held(client)
+    file = lock_held(client, first, 0)
+    body = add_to(client, file, refs((later["id"], 0), (later["id"], 0))).json()
+    assert body["added"] == 1 and body["total"] == 2
+
+
+def test_a_full_file_cannot_be_added_to_through_the_service(client):
+    job = held(client)
+    key = locked.new_key()
+    full = {"data": base64.b64encode(locked.seal([Image.new("RGB", (2, 2))] * locked.MAX_PICTURES, key)).decode()}
+    r = add_to(client, {**full, "key": locked.format_key(key)}, refs((job["id"], 0)))
+    assert r.status_code == 400 and "new file" in r.json()["detail"]
+    assert client.get(f"/api/studio/jobs/{job['id']}/held/0").status_code == 200  # nothing was lost
+
+
+def test_without_the_encryption_library_adding_says_what_to_install(client, monkeypatch):
+    first, later = held(client), held(client)
+    file = lock_held(client, first, 0)
+    monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.ciphers.aead", None)
+    r = add_to(client, file, refs((later["id"], 0)))
+    assert r.status_code == 503 and "studio" in r.json()["detail"]
+    assert client.get(f"/api/studio/jobs/{later['id']}/held/0").status_code == 200  # nothing was lost

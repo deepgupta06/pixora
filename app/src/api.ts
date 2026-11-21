@@ -417,6 +417,12 @@ export const api = {
   /** Incognito pictures, encrypted together under one new key. The key comes back once and Pixora keeps no copy of it. */
   lockPictures: (pictures: { job_id: number; index: number }[]) =>
     request<{ key: string; name: string; count: number; data: string }>('/api/studio/locked/lock', 'POST', { pictures }),
+  /**
+   * Incognito pictures added to a locked file, under that file's own key. The new file comes back
+   * to be saved by the caller; the service stores nothing and keeps no copy of the key.
+   */
+  addLocked: (data: string, key: string, pictures: { job_id: number; index: number }[]) =>
+    request<{ added: number; total: number; data: string }>('/api/studio/locked/add', 'POST', { data, key, pictures }),
   /** The pictures in a locked file, as PNG, with a small JPEG of each. Decrypted in memory; the service says not to keep them. */
   openLocked: (data: string, key: string) =>
     request<{ images: string[]; thumbs: string[] }>('/api/studio/locked/open', 'POST', { data, key }),

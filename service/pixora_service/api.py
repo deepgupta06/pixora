@@ -309,6 +309,10 @@ class OpenLocked(BaseModel):
     key: str
 
 
+class AddLocked(OpenLocked):
+    pictures: list[HeldRef]
+
+
 class HeldPicture(BaseModel):
     index: int
     width: int
@@ -1424,6 +1428,27 @@ def create_app(
                 "count": len(images),
                 "data": base64.b64encode(data).decode("ascii"),
             },
+            headers=kept_nowhere,
+        )
+
+    @app.post("/api/studio/locked/add")
+    def studio_add_locked(body: AddLocked) -> JSONResponse:
+        """A locked file with held pictures added to it, under the file's own key.
+
+        Nothing is stored: the new file comes back for the caller to put where it likes, and the
+        pictures are not discarded until it has. The key is not returned: the caller has it.
+        """
+        wanted = list(dict.fromkeys((r.job_id, r.index) for r in body.pictures))  # each once, in order
+        images = [studio_call(lambda j=job_id, i=index: studio.private_image(j, i)) for job_id, index in wanted]
+        try:
+            key = locked.parse_key(body.key)
+            data, total = locked.append(base64.b64decode(body.data, validate=True), key, images)
+        except locked.LockedError as e:
+            raise locked_error(e) from None
+        except ValueError:  # the file did not arrive as base64
+            raise HTTPException(400, locked.WRONG, headers=kept_nowhere) from None
+        return JSONResponse(
+            {"added": len(images), "total": total, "data": base64.b64encode(data).decode("ascii")},
             headers=kept_nowhere,
         )
 

@@ -85,6 +85,23 @@ originals are never modified.
   through `Studio.save` or `keep`: no library row, thumbnail, scan, temporary
   file or log line. The held pictures are discarded once the file is written,
   not before, so cancelling the save window loses nothing.
+- Adding to a locked file: "Add to locked file" in the view puts the ticked
+  pictures into a `.pxlock` file the user already has, so pictures made on
+  different days share one key. The user chooses the file and types its key; the
+  service opens the file with it, puts the new pictures after the old ones (whose
+  PNG bytes are kept as they were), encrypts all of them again under the same key
+  with a fresh random nonce, checks that the result opens to exactly those
+  pictures, and returns it. No new key is made or shown: the key serves that one
+  request and is kept nowhere. Nothing is stored; the file goes back to the app,
+  whose Save window suggests the old file's name, so saving over it updates the
+  file and a new name keeps the old one as it was. Only once it is written are
+  the held pictures discarded, and cancelling leaves them held. A wrong key or a
+  damaged file is refused before anything is made, with the same one answer. A
+  file holds at most 100 pictures, and a file of the first form that is added to
+  becomes the current form, without its settings. The browser opens a save
+  window only for a click it saw a few seconds ago and making a file can take
+  longer, so when it refuses for that reason a "Your file is ready" box asks for
+  a click (for locking too); if it refuses even then, a plain download is made.
 - The incognito picture view: in incognito mode the Create screen shows, above
   the form, the incognito pictures one large with Previous and Next (also the
   arrow keys), their thumbnails below, and for the one shown: Save and Discard.
@@ -109,7 +126,8 @@ originals are never modified.
   programs reading it. It does not protect against someone who has the key,
   against a screenshot, or against a program that can read this computer's
   memory while pictures are open. Not done: registering `.pxlock` with the
-  desktop shell so double-clicking opens Pixora; separate Windows windows.
+  desktop shell so double-clicking opens Pixora; separate Windows windows;
+  taking one picture out of a locked file.
 - The models sit behind `StudioEngine`, as face models sit behind `FaceEngine`.
 
 | Task | Model | Notes |

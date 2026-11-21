@@ -1029,6 +1029,10 @@ button[aria-selected='true'] {
 .inc-hint {
   margin: 0 0 6px;
 }
+.inc-message {
+  margin: 6px 0 0;
+  color: var(--ok);
+}
 .inc-strip {
   display: flex;
   gap: 8px;

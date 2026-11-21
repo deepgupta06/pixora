@@ -10,14 +10,25 @@ type Writable = { write: (data: Blob) => Promise<void>; close: () => Promise<voi
 type SavePicker = (options: object) => Promise<{ createWritable: () => Promise<Writable> }>
 
 /**
- * Let the user put a file wherever they like, outside Pixora. Returns whether the file is
- * known to have been written: with the plain download that older browsers fall back to, the
- * browser does not say.
+ * What came of saving: written where the user chose; handed to the browser's own downloads,
+ * which does not say whether it worked; cancelled by the user; or not tried yet, because the
+ * browser wants a fresh click first (see `saveBlob`).
+ */
+export type SaveResult = 'written' | 'handed-over' | 'cancelled' | 'needs-click'
+
+/**
+ * Let the user put a file wherever they like, outside Pixora.
+ *
+ * The browser opens its save window only for a click it saw in the last few seconds, and
+ * making a file can take longer than that. When it refuses for that reason this gives
+ * 'needs-click', and the caller asks for another click and tries again with `fromClick`. A
+ * call made straight from a click that still gets refused falls back to a plain download.
  */
 export async function saveBlob(
   blob: Blob,
   { name, description, mime, ext }: SaveOptions,
-): Promise<'written' | 'handed-over' | 'cancelled'> {
+  fromClick = false,
+): Promise<SaveResult> {
   const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker
   if (picker) {
     try {
@@ -28,7 +39,8 @@ export async function saveBlob(
       return 'written'
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return 'cancelled'
-      throw e
+      if (!(e instanceof DOMException && e.name === 'SecurityError')) throw e
+      if (!fromClick) return 'needs-click'
     }
   }
   const link = document.createElement('a')
