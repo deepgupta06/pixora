@@ -68,28 +68,37 @@ originals are never modified.
   While an incognito job runs, warnings are turned off everywhere, because the
   image libraries print the part of a long description they cut off, and set
   their own log levels after the job has started.
-- Locked pictures: next to Save, an incognito picture can be saved locked, as
-  one `.pxlock` file with a random name that only Pixora can open, and only
-  with a key. The service makes a random 256-bit key for each save, encrypts
-  the picture (as PNG) together with its settings, the description included,
-  with AES-256-GCM, and returns the file bytes and the key once. The user is
-  shown the key as 13 groups of four base32 characters, with a Copy button and
-  a warning that a lost key means a lost picture, and must say they have
+- Locked pictures: incognito pictures can be saved locked, one or several together,
+  as one `.pxlock` file with a random name that only Pixora can open, and only
+  with a key. The user ticks the pictures to lock (or locks one) and the
+  service makes a random 256-bit key for the file, encrypts the pictures (each
+  as PNG) with AES-256-GCM, and returns the file bytes and the key once. Only
+  the pictures are kept: no description, no seed, no other settings. The user
+  is shown the key as 13 groups of four base32 characters, with a Copy button
+  and a warning that a lost key means lost pictures, and must say they have
   saved it. Pixora keeps the key nowhere: not on disk, not in the database,
-  not in the log. The file is magic `PXLOCK`, a version byte, a fresh 96-bit
-  nonce, then ciphertext and tag; the header is the associated data, so a
-  changed byte anywhere, or a wrong key, gives one answer: "Wrong key or
-  damaged file". A locked save never goes through `Studio.save` or `keep`: no
-  library row, thumbnail, scan, temporary file or log line. The held copy is
-  discarded once the file is written, not before, so cancelling the save window
-  loses nothing. "Open locked picture" takes a `.pxlock` file and its key; the
-  service decrypts in memory and sends the picture with `no-store, no-cache`;
-  the app shows it from memory, and closing the viewer forgets it. "Export as
-  normal image" is a separate, deliberate step. This protects the file against
-  other programs reading it. It does not protect against someone who has the
-  key, or against a program that can read this computer's memory while a
-  picture is open. Not done: registering `.pxlock` with the desktop shell so
-  double-clicking opens Pixora.
+  not in the log. The file is magic `PXLOCK`, a version byte (2), a fresh
+  96-bit nonce, then ciphertext and tag; the header is the associated data, so
+  a changed byte anywhere, or a wrong key, gives one answer: "Wrong key or
+  damaged file". Files of the first form (version 1: one picture and its
+  settings) still open; their settings are not read. A locked save never goes
+  through `Studio.save` or `keep`: no library row, thumbnail, scan, temporary
+  file or log line. The held pictures are discarded once the file is written,
+  not before, so cancelling the save window loses nothing.
+- Opening a locked file: "Open locked pictures" takes a `.pxlock` file and its
+  key; the service decrypts in memory and sends the pictures with
+  `no-store, no-cache`, and the app shows them from memory (blob addresses,
+  revoked when the window closes). Each opened file gets a window of its own
+  that shows all its pictures at once, or one large with arrows. The windows
+  belong to the whole app, so they stay across views; there can be several;
+  each can be dragged, resized and maximized, and is kept wholly inside the
+  Pixora window, so it cannot be carried off the screen. The pictures cannot
+  be dragged out of a window or saved from a menu; "Export as normal image" is
+  a separate, deliberate step. Closing a window forgets its pictures. This
+  protects the file against other programs reading it. It does not protect
+  against someone who has the key, against a screenshot, or against a program
+  that can read this computer's memory while pictures are open. Not done:
+  registering `.pxlock` with the desktop shell so double-clicking opens Pixora.
 - The models sit behind `StudioEngine`, as face models sit behind `FaceEngine`.
 
 | Task | Model | Notes |

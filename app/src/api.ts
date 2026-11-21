@@ -413,12 +413,12 @@ export const api = {
   jobs: () => request<StudioJob[]>('/api/studio/jobs'),
   /** An incognito picture. The service tells the browser not to keep a copy. */
   heldUrl: (jobId: number, index: number) => `${BASE}/api/studio/jobs/${jobId}/held/${index}`,
-  /** An incognito picture, encrypted. The key comes back once and Pixora keeps no copy of it. */
-  lockHeld: (jobId: number, index: number) =>
-    request<{ key: string; name: string; data: string }>(`/api/studio/jobs/${jobId}/held/${index}/lock`, 'POST'),
-  /** The picture in a locked file, as PNG. The service decrypts it in memory and says not to keep it. */
+  /** Incognito pictures, encrypted together under one new key. The key comes back once and Pixora keeps no copy of it. */
+  lockPictures: (pictures: { job_id: number; index: number }[]) =>
+    request<{ key: string; name: string; count: number; data: string }>('/api/studio/locked/lock', 'POST', { pictures }),
+  /** The pictures in a locked file, as PNG. The service decrypts them in memory and says not to keep them. */
   openLocked: (data: string, key: string) =>
-    request<{ image: string; settings: Record<string, unknown> }>('/api/studio/locked/open', 'POST', { data, key }),
+    request<{ images: string[] }>('/api/studio/locked/open', 'POST', { data, key }),
   discardHeld: (jobId: number, index?: number) =>
     request<{ discarded: boolean }>(
       `/api/studio/jobs/${jobId}/held${index === undefined ? '' : `/${index}`}`,

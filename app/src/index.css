@@ -927,16 +927,6 @@ button[aria-selected='true'] {
 .lock-dialog {
   width: min(560px, calc(100vw - 32px));
 }
-.lock-dialog.lock-open {
-  width: min(900px, calc(100vw - 32px));
-}
-.lock-dialog.lock-open img {
-  display: block;
-  max-width: 100%;
-  max-height: 60vh;
-  margin: 12px auto;
-  border-radius: 6px;
-}
 .lock-key {
   margin: 12px 0 8px;
   padding: 12px 14px;
@@ -966,18 +956,143 @@ button[aria-selected='true'] {
   font-family: 'Cascadia Mono', Consolas, monospace;
   letter-spacing: 0.04em;
 }
-.lock-details {
+.held-item {
+  position: relative;
+}
+.held-pick {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
-  margin: 0;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.55);
+  cursor: pointer;
 }
-.lock-details dt {
-  color: var(--muted);
-}
-.lock-details dd {
+.held-pick input {
   margin: 0;
-  overflow-wrap: anywhere;
+  width: 16px;
+  height: 16px;
+}
+
+/* A locked file, open: a window of its own inside the app, kept wholly on screen. */
+.lock-win {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-width: 360px;
+  min-height: 260px;
+  overflow: hidden;
+  resize: both;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 14px 44px rgb(0 0 0 / 0.55);
+  user-select: none;
+}
+.lock-win.maximized {
+  inset: 0;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+}
+.lock-win-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px 6px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  cursor: move;
+  touch-action: none;
+}
+.lock-win.maximized .lock-win-bar {
+  cursor: default;
+}
+.lock-win-title {
+  font-weight: 600;
+}
+.lock-win-buttons {
+  display: flex;
+  gap: 6px;
+}
+.lock-win-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+.lock-win-note {
+  margin: 0;
+  padding: 6px 12px;
+}
+.lock-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+.lock-tile {
+  padding: 0;
+  line-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  border-radius: 6px;
+}
+.lock-tile img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+.lock-win img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+.lock-light {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+.lock-light > img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.lock-prev,
+.lock-next {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 8px 12px;
+  font-size: 22px;
+  background: rgb(0 0 0 / 0.55);
+}
+.lock-prev {
+  left: 6px;
+}
+.lock-next {
+  right: 6px;
+}
+.lock-light-bar {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.55);
+}
+.lock-close-all {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
 }
 .held-zoom {
   position: fixed;

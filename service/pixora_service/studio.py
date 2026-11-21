@@ -369,14 +369,6 @@ class Studio:
     def private_image(self, job_id: int, index: int) -> Image.Image:
         return self._private(job_id, index)[1]
 
-    def held_picture(self, job_id: int, index: int) -> tuple[Image.Image, dict]:
-        """An incognito picture with the settings it was made with, for locking it.
-
-        Nothing is written, saved or discarded here.
-        """
-        _, image, settings = self._private(job_id, index)
-        return image, dict(settings)
-
     def keep(self, job_id: int, index: int) -> int:
         """Save an incognito picture: from here on it is an ordinary library picture."""
         with self._lock:

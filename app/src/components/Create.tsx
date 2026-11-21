@@ -9,7 +9,8 @@ import {
 } from '../api'
 import { base64ToBlob, saveBlob } from '../saveFile'
 import { useJob, useStudioStatus } from '../useStudio'
-import { KeyDialog, OpenLocked } from './Locked'
+import { useLocked } from '../lockedContext'
+import { KeyDialog } from './Locked'
 import { JobProgress, ModelsNeeded, Results, Steps } from './StudioParts'
 
 interface Props {
@@ -76,10 +77,12 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
   const [heldJobs, setHeldJobs] = useState<StudioJob[]>([])
   const [zoom, setZoom] = useState<string | null>(null)
   const [heldError, setHeldError] = useState<string | null>(null)
-  // A locked picture's key, shown once and then gone; and a locked file waiting for its key.
-  const [lockedKey, setLockedKey] = useState<string | null>(null)
-  const [lockedFile, setLockedFile] = useState<File | null>(null)
+  // The key to a file of locked pictures, shown once and then gone. Which pictures are ticked
+  // to be locked together. Locked files open in windows that belong to the whole app.
+  const [lockedKey, setLockedKey] = useState<{ key: string; count: number } | null>(null)
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const lockedPicker = useRef<HTMLInputElement>(null)
+  const { openFile } = useLocked()
   const loadHeld = useCallback(
     () =>
       api.jobs().then(
@@ -119,6 +122,10 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
   }, [loadHeld, adopt])
 
   const heldCount = heldJobs.reduce((n, j) => n + j.held.length, 0)
+  const heldKey = (r: { job_id: number; index: number }) => `${r.job_id}:${r.index}`
+  const allHeld = heldJobs.flatMap((j) => j.held.map((h) => ({ job_id: j.id, index: h.index })))
+  // The ticked pictures that are still held.
+  const selection = allHeld.filter((r) => picked.has(heldKey(r)))
   const afterHeld = (action: Promise<unknown>) =>
     action.then(
       () => {
@@ -131,20 +138,22 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
       },
     )
 
-  // Encrypt a held picture and let the user put the file where they like. Only once it is
-  // written is the picture let go, and the key is shown then and nowhere else.
-  const saveLocked = (jobId: number, index: number) =>
+  // Encrypt held pictures together under one key and let the user put the file where they
+  // like. Only once it is written are the pictures let go, and the key is shown then and
+  // nowhere else.
+  const saveLocked = (refs: { job_id: number; index: number }[]) =>
     afterHeld(
-      api.lockHeld(jobId, index).then(async ({ key, name, data }) => {
+      api.lockPictures(refs).then(async ({ key, name, count, data }) => {
         const result = await saveBlob(base64ToBlob(data, 'application/octet-stream'), {
           name,
-          description: 'Pixora locked picture',
+          description: 'Pixora locked pictures',
           mime: 'application/octet-stream',
           ext: '.pxlock',
         })
         if (result === 'cancelled') return
-        setLockedKey(key)
-        await api.discardHeld(jobId, index)
+        setLockedKey({ key, count })
+        setPicked(new Set())
+        await Promise.all(refs.map((r) => api.discardHeld(r.job_id, r.index).catch(() => undefined)))
       }),
     )
 
@@ -390,8 +399,8 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
               : 'Make pictures without keeping any record, and save only the ones you choose.'}
           </p>
           <div className="row">
-            <button onClick={() => lockedPicker.current?.click()}>Open locked picture…</button>
-            <span className="muted">A .pxlock file, with its key.</span>
+            <button onClick={() => lockedPicker.current?.click()}>Open locked pictures…</button>
+            <span className="muted">A .pxlock file and its key. It opens in a window of its own.</span>
           </div>
           <input
             ref={lockedPicker}
@@ -401,7 +410,7 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
             onChange={(e) => {
               const file = e.target.files?.[0]
               e.target.value = '' // so the same file can be chosen again
-              if (file) setLockedFile(file)
+              if (file) openFile(file)
             }}
           />
         </div>
@@ -422,22 +431,45 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
           <section className="held">
             <div className="row held-head">
               <h3>Not saved ({heldCount})</h3>
-              <button
-                onClick={() => void afterHeld(Promise.all(heldJobs.map((j) => api.discardHeld(j.id))))}
-              >
-                Discard all
-              </button>
+              <div className="row">
+                <button
+                  onClick={() =>
+                    setPicked(selection.length === allHeld.length ? new Set() : new Set(allHeld.map(heldKey)))
+                  }
+                >
+                  {selection.length === allHeld.length ? 'Select none' : 'Select all'}
+                </button>
+                <button className="primary" disabled={selection.length === 0} onClick={() => void saveLocked(selection)}>
+                  Save locked together{selection.length > 0 ? ` (${selection.length})` : ''}…
+                </button>
+                <button onClick={() => void afterHeld(Promise.all(heldJobs.map((j) => api.discardHeld(j.id))))}>
+                  Discard all
+                </button>
+              </div>
             </div>
             <p className="muted">
-              Held in memory only. Save puts a picture in a folder you choose; it is not added to Pixora. Save locked
-              does the same, but encrypts it so only Pixora can open it, with a key you are shown once. The rest leave
-              no trace.
+              Held in memory only. Save puts a picture in a folder you choose; it is not added to Pixora. Tick pictures
+              and Save locked together puts them in one encrypted file with one key, shown once, that only Pixora can
+              open. The rest leave no trace.
             </p>
             {heldError && <p className="form-error">{heldError}</p>}
             <div className="held-grid">
               {heldJobs.flatMap((j) =>
                 j.held.map((h) => (
                   <figure key={`${j.id}-${h.index}`} className="held-item">
+                    <label className="held-pick">
+                      <input
+                        type="checkbox"
+                        checked={picked.has(heldKey({ job_id: j.id, index: h.index }))}
+                        aria-label="Lock this picture with the others ticked"
+                        onChange={(e) => {
+                          const next = new Set(picked)
+                          if (e.target.checked) next.add(heldKey({ job_id: j.id, index: h.index }))
+                          else next.delete(heldKey({ job_id: j.id, index: h.index }))
+                          setPicked(next)
+                        }}
+                      />
+                    </label>
                     <button className="tile" onClick={() => setZoom(api.heldUrl(j.id, h.index))} aria-label="Look closer">
                       <img src={api.heldUrl(j.id, h.index)} alt="" />
                     </button>
@@ -455,7 +487,7 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
                       >
                         Save…
                       </button>
-                      <button onClick={() => void saveLocked(j.id, h.index)}>Save locked…</button>
+                      <button onClick={() => void saveLocked([{ job_id: j.id, index: h.index }])}>Save locked…</button>
                       <button onClick={() => void afterHeld(api.discardHeld(j.id, h.index))}>Discard</button>
                     </figcaption>
                   </figure>
@@ -469,8 +501,7 @@ export function Create({ onOpen, onChange, reuse, revision }: Props) {
             <img src={zoom} alt="" />
           </div>
         )}
-        {lockedKey && <KeyDialog value={lockedKey} onDone={() => setLockedKey(null)} />}
-        {lockedFile && <OpenLocked file={lockedFile} onClose={() => setLockedFile(null)} />}
+        {lockedKey && <KeyDialog value={lockedKey.key} count={lockedKey.count} onDone={() => setLockedKey(null)} />}
         {job?.state === 'done' && !job.incognito && (
           <section>
             <h3>Saved to your library</h3>
