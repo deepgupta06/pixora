@@ -10,10 +10,11 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 import numpy as np
+from PIL import Image
 from pydantic import BaseModel
 
 from . import __version__, appearance, identity, locked, model_store, trash
@@ -1359,10 +1360,16 @@ def create_app(
             raise HTTPException(e.status, str(e))
 
     @app.get("/api/studio/jobs/{job_id}/held/{index}")
-    def studio_held(job_id: int, index: int) -> Response:
+    def studio_held(job_id: int, index: int, size: int | None = Query(None, ge=32, le=2048)) -> Response:
+        """A held picture, or with `size` a small version of it that fits that many pixels."""
         image = studio_call(lambda: studio.private_image(job_id, index))
         out = io.BytesIO()
-        image.convert("RGB").save(out, "JPEG", quality=95, subsampling=0)
+        if size is None:
+            image.convert("RGB").save(out, "JPEG", quality=95, subsampling=0)
+        else:
+            small = image.convert("RGB")  # a copy: the held picture itself is not touched
+            small.thumbnail((size, size))
+            small.save(out, "JPEG", quality=85)
         return Response(out.getvalue(), media_type="image/jpeg", headers=unsaved)
 
     @app.post("/api/studio/jobs/{job_id}/held/{index}/save")
@@ -1386,6 +1393,15 @@ def create_app(
 
     def locked_error(e: locked.LockedError) -> HTTPException:
         return HTTPException(e.status, str(e), headers=kept_nowhere)
+
+    def thumbnail_of(png: bytes) -> str:
+        """A small JPEG of a picture, as base64, for a strip of thumbnails."""
+        with Image.open(io.BytesIO(png)) as image:
+            small = image.convert("RGB")
+        small.thumbnail((256, 256))
+        out = io.BytesIO()
+        small.save(out, "JPEG", quality=85)
+        return base64.b64encode(out.getvalue()).decode("ascii")
 
     @app.post("/api/studio/locked/lock")
     def studio_lock(body: LockRequest) -> JSONResponse:
@@ -1421,8 +1437,13 @@ def create_app(
             raise locked_error(e) from None
         except ValueError:  # the file did not arrive as base64
             raise HTTPException(400, locked.WRONG, headers=kept_nowhere) from None
+        try:
+            thumbs = [thumbnail_of(png) for png in pictures]
+        except OSError:  # not a picture after all
+            raise HTTPException(400, locked.WRONG, headers=kept_nowhere) from None
         return JSONResponse(
-            {"images": [base64.b64encode(png).decode("ascii") for png in pictures]}, headers=kept_nowhere
+            {"images": [base64.b64encode(png).decode("ascii") for png in pictures], "thumbs": thumbs},
+            headers=kept_nowhere,
         )
 
     @app.get("/api/studio/history")

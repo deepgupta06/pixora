@@ -412,13 +412,14 @@ export const api = {
   cancelJob: (id: number) => request<StudioJob>(`/api/studio/jobs/${id}/cancel`, 'POST'),
   jobs: () => request<StudioJob[]>('/api/studio/jobs'),
   /** An incognito picture. The service tells the browser not to keep a copy. */
-  heldUrl: (jobId: number, index: number) => `${BASE}/api/studio/jobs/${jobId}/held/${index}`,
+  heldUrl: (jobId: number, index: number, size?: number) =>
+    `${BASE}/api/studio/jobs/${jobId}/held/${index}${size ? `?size=${size}` : ''}`,
   /** Incognito pictures, encrypted together under one new key. The key comes back once and Pixora keeps no copy of it. */
   lockPictures: (pictures: { job_id: number; index: number }[]) =>
     request<{ key: string; name: string; count: number; data: string }>('/api/studio/locked/lock', 'POST', { pictures }),
-  /** The pictures in a locked file, as PNG. The service decrypts them in memory and says not to keep them. */
+  /** The pictures in a locked file, as PNG, with a small JPEG of each. Decrypted in memory; the service says not to keep them. */
   openLocked: (data: string, key: string) =>
-    request<{ images: string[] }>('/api/studio/locked/open', 'POST', { data, key }),
+    request<{ images: string[]; thumbs: string[] }>('/api/studio/locked/open', 'POST', { data, key }),
   discardHeld: (jobId: number, index?: number) =>
     request<{ discarded: boolean }>(
       `/api/studio/jobs/${jobId}/held${index === undefined ? '' : `/${index}`}`,

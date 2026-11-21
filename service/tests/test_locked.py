@@ -243,8 +243,10 @@ def test_locking_and_opening_leave_nothing_behind_and_the_key_is_kept_nowhere(cl
     assert opened.status_code == 200
     assert opened.headers["cache-control"] == "no-store, no-cache, must-revalidate"
     shown = opened.json()
-    assert list(shown) == ["images"]  # the pictures and nothing about them
+    assert list(shown) == ["images", "thumbs"]  # the pictures and small ones to browse, nothing about them
     assert [Image.open(io.BytesIO(base64.b64decode(p))).size for p in shown["images"]] == [(1024, 1024)] * 3
+    thumbs = [Image.open(io.BytesIO(base64.b64decode(t))) for t in shown["thumbs"]]
+    assert [t.format for t in thumbs] == ["JPEG"] * 3 and all(max(t.size) == 256 for t in thumbs)
     assert library_state(client) == before and started == []
 
     out, err = capsys.readouterr()
@@ -252,6 +254,18 @@ def test_locking_and_opening_leave_nothing_behind_and_the_key_is_kept_nowhere(cl
         for form in (body["key"], body["key"].replace("-", ""), again["key"], again["key"].replace("-", "")):
             assert form not in text
         assert PROMPT not in text and "another private description" not in text
+
+
+def test_a_held_picture_can_be_asked_for_small_and_is_left_as_it_was(client):
+    job = held(client)
+    url = f"/api/studio/jobs/{job['id']}/held/0"
+    small = client.get(url, params={"size": 256})
+    assert small.status_code == 200 and small.headers["cache-control"] == "no-store"
+    assert Image.open(io.BytesIO(small.content)).size == (256, 256)
+    # the picture itself is untouched by that
+    assert Image.open(io.BytesIO(client.get(url).content)).size == (1024, 1024)
+    for bad in (0, 31, 5000, "wide"):
+        assert client.get(url, params={"size": bad}).status_code == 422
 
 
 def test_the_same_picture_asked_for_twice_is_locked_once(client):

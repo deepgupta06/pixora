@@ -85,20 +85,26 @@ originals are never modified.
   through `Studio.save` or `keep`: no library row, thumbnail, scan, temporary
   file or log line. The held pictures are discarded once the file is written,
   not before, so cancelling the save window loses nothing.
-- Opening a locked file: "Open locked pictures" takes a `.pxlock` file and its
-  key; the service decrypts in memory and sends the pictures with
-  `no-store, no-cache`, and the app shows them from memory (blob addresses,
-  revoked when the window closes). Each opened file gets a window of its own
-  that shows all its pictures at once, or one large with arrows. The windows
-  belong to the whole app, so they stay across views; there can be several;
-  each can be dragged, resized and maximized, and is kept wholly inside the
-  Pixora window, so it cannot be carried off the screen. The pictures cannot
-  be dragged out of a window or saved from a menu; "Export as normal image" is
-  a separate, deliberate step. Closing a window forgets its pictures. This
-  protects the file against other programs reading it. It does not protect
-  against someone who has the key, against a screenshot, or against a program
-  that can read this computer's memory while pictures are open. Not done:
-  registering `.pxlock` with the desktop shell so double-clicking opens Pixora.
+- The incognito picture view: in incognito mode the Create screen shows, above
+  the form, the incognito pictures one large with Previous and Next (also the
+  arrow keys), their thumbnails below, and for the one shown: Save, Save
+  locked and Discard. Ticking thumbnails and pressing Save locked together puts
+  them in one file under one key. The view can be maximized to fill the window.
+  The list of earlier pictures is not shown in incognito mode. Pictures held by
+  the service are shown from it with "do not store"; thumbnails are small
+  versions made on request. The view also appears while pictures are held, even
+  if the incognito box is unticked, so none sits in memory out of sight.
+- Opening a locked file: "Open locked pictures" in that view takes a `.pxlock`
+  file and its key; the service decrypts in memory and sends the pictures, with
+  a small JPEG of each, as `no-store, no-cache`. They join the view, marked with
+  a lock, as blob addresses in the page's memory only: nothing is written, and
+  they are forgotten when the screen is left, or with "Close locked pictures".
+  Their pictures cannot be dragged out or saved from a menu; "Export as normal
+  image" is a separate, deliberate step. This protects the file against other
+  programs reading it. It does not protect against someone who has the key,
+  against a screenshot, or against a program that can read this computer's
+  memory while pictures are open. Not done: registering `.pxlock` with the
+  desktop shell so double-clicking opens Pixora; separate Windows windows.
 - The models sit behind `StudioEngine`, as face models sit behind `FaceEngine`.
 
 | Task | Model | Notes |
